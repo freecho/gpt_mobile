@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import kotlin.math.max
 import kotlin.math.roundToInt
+import org.json.JSONObject
 
 private const val MATH_JAX_BASE_URL = "file:///android_asset/mathjax/"
 private const val MATH_JAX_RENDER_RETRY_DELAY_MILLIS = 50L
@@ -168,7 +169,21 @@ window.renderMath = function(expression, displayMode, textColor, fontSizePx) {
   const rect = measuredNode.getBoundingClientRect();
   const width = Math.max(Math.ceil(rect.width), Math.ceil(root.scrollWidth), 1);
   const height = Math.max(Math.ceil(rect.height), Math.ceil(root.scrollHeight), 1);
-  return width + '|' + height;
+  return {
+    width,
+    height,
+    html: root.innerHTML
+  };
+};
+
+window.applyCachedMath = function(html, displayMode, textColor, fontSizePx) {
+  const root = document.getElementById('root');
+  document.body.className = displayMode ? 'display' : 'inline';
+  document.body.style.color = textColor;
+  document.body.style.fontSize = fontSizePx + 'px';
+  root.className = displayMode ? 'display' : 'inline';
+  root.innerHTML = html;
+  return true;
 };
 </script>
 </head>
@@ -186,6 +201,12 @@ private data class MathRenderRequest(
     val minimumHeightPx: Int
 )
 
+private data class MathRenderResult(
+    val widthPx: Int,
+    val heightPx: Int,
+    val html: String
+)
+
 private object MathJaxDisplayHeightCache {
     private val cache = LruCache<String, Int>(DISPLAY_MATH_HEIGHT_CACHE_SIZE)
 
@@ -196,6 +217,19 @@ private object MathJaxDisplayHeightCache {
         heightPx: Int
     ) {
         cache.put(request.cacheKey(), heightPx)
+    }
+}
+
+private object MathJaxRenderCache {
+    private val cache = LruCache<String, MathRenderResult>(DISPLAY_MATH_HEIGHT_CACHE_SIZE)
+
+    fun get(request: MathRenderRequest): MathRenderResult? = cache.get(request.cacheKey())
+
+    fun put(
+        request: MathRenderRequest,
+        result: MathRenderResult
+    ) {
+        cache.put(request.cacheKey(), result)
     }
 }
 
@@ -344,6 +378,9 @@ private class MathJaxWebView(context: Context) : WebView(context) {
             return
         }
 
+        if (applyCachedResult(request)) {
+            return
+        }
         clearRenderedContent()
         pendingRequest = request
         renderRetryCount = 0
@@ -367,6 +404,9 @@ private class MathJaxWebView(context: Context) : WebView(context) {
     private fun renderPendingRequest() {
         val request = pendingRequest ?: return
         if (!pageLoaded) return
+        if (applyCachedResult(request)) {
+            return
+        }
 
         evaluateJavascript(buildRenderScript(request)) { rawResult ->
             if (rawResult == "\"loading\"") {
@@ -374,26 +414,27 @@ private class MathJaxWebView(context: Context) : WebView(context) {
                 return@evaluateJavascript
             }
 
-            val measuredBounds = parseMeasuredBounds(rawResult)
-            if (measuredBounds == null) {
+            val renderResult = parseRenderResult(rawResult)
+            if (renderResult == null) {
                 scheduleRenderRetry()
                 return@evaluateJavascript
             }
 
             if (
                 request.displayMode &&
-                measuredBounds.second <= request.minimumHeightPx &&
+                renderResult.heightPx <= request.minimumHeightPx &&
                 renderRetryCount < MAX_MATH_JAX_RENDER_RETRIES
             ) {
                 scheduleRenderRetry()
                 return@evaluateJavascript
             }
 
+            MathJaxRenderCache.put(request, renderResult)
             renderedRequest = request
             pendingRequest = null
             renderRetryCount = 0
 
-            onMeasured?.invoke(max(measuredBounds.second, request.minimumHeightPx))
+            onMeasured?.invoke(max(renderResult.heightPx, request.minimumHeightPx))
         }
     }
 
@@ -421,6 +462,18 @@ private class MathJaxWebView(context: Context) : WebView(context) {
             null
         )
     }
+
+    private fun applyCachedResult(request: MathRenderRequest): Boolean {
+        val cachedResult = MathJaxRenderCache.get(request) ?: return false
+        if (!pageLoaded) return false
+
+        evaluateJavascript(buildApplyCachedScript(request, cachedResult), null)
+        renderedRequest = request
+        pendingRequest = null
+        renderRetryCount = 0
+        onMeasured?.invoke(max(cachedResult.heightPx, request.minimumHeightPx))
+        return true
+    }
 }
 
 private fun MathRenderRequest.cacheKey(): String = buildString(tex.length + 32) {
@@ -447,18 +500,33 @@ private fun buildRenderScript(request: MathRenderRequest): String = """
     })();
 """.trimIndent()
 
-private fun parseMeasuredBounds(rawResult: String?): Pair<Int, Int>? {
+private fun buildApplyCachedScript(
+    request: MathRenderRequest,
+    result: MathRenderResult
+): String = """
+    (function() {
+      if (typeof window.applyCachedMath !== 'function') {
+        return null;
+      }
+      return window.applyCachedMath(
+        "${escapeJavaScriptString(result.html)}",
+        ${request.displayMode},
+        "${request.textColorCss}",
+        ${request.fontSizePx}
+      );
+    })();
+""".trimIndent()
+
+private fun parseRenderResult(rawResult: String?): MathRenderResult? {
     val result = rawResult
-        ?.removePrefix("\"")
-        ?.removeSuffix("\"")
         ?.takeIf { it.isNotBlank() && it != "null" }
         ?: return null
-    val parts = result.split('|')
-    if (parts.size != 2) return null
-
-    val width = parts[0].toIntOrNull() ?: return null
-    val height = parts[1].toIntOrNull() ?: return null
-    return width to height
+    val json = JSONObject(result)
+    return MathRenderResult(
+        widthPx = json.getInt("width"),
+        heightPx = json.getInt("height"),
+        html = json.getString("html")
+    )
 }
 
 private fun formatCssColor(color: Color): String {
