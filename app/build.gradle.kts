@@ -103,6 +103,9 @@ dependencies {
     // Markdown
     implementation(libs.compose.markdown)
     implementation(libs.richtext)
+    implementation(libs.markdown.renderer)
+    implementation(libs.markdown.renderer.code)
+    implementation(libs.katex.math.view)
 
     // Navigation
     implementation(libs.hilt.navigation)
