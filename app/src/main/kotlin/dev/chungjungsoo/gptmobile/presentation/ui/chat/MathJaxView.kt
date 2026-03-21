@@ -2,6 +2,7 @@ package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.LruCache
 import android.view.View
 import android.webkit.WebSettings
 import android.webkit.WebView
@@ -28,6 +29,7 @@ import kotlin.math.roundToInt
 private const val MATH_JAX_BASE_URL = "file:///android_asset/mathjax/"
 private const val MATH_JAX_RENDER_RETRY_DELAY_MILLIS = 50L
 private const val MAX_MATH_JAX_RENDER_RETRIES = 60
+private const val DISPLAY_MATH_HEIGHT_CACHE_SIZE = 128
 
 private const val MATH_JAX_HTML = """
 <!DOCTYPE html>
@@ -138,6 +140,19 @@ private data class MathRenderRequest(
     val minimumHeightPx: Int
 )
 
+private object MathJaxDisplayHeightCache {
+    private val cache = LruCache<String, Int>(DISPLAY_MATH_HEIGHT_CACHE_SIZE)
+
+    fun get(request: MathRenderRequest): Int? = cache.get(request.cacheKey())
+
+    fun put(
+        request: MathRenderRequest,
+        heightPx: Int
+    ) {
+        cache.put(request.cacheKey(), heightPx)
+    }
+}
+
 @Composable
 internal fun InlineMathView(tex: String) {
     val density = LocalDensity.current
@@ -154,13 +169,18 @@ internal fun InlineMathView(tex: String) {
     val textColorCss = remember(textColor) {
         formatCssColor(textColor)
     }
+    val request = remember(tex, fontSizeCssPx, textColorCss, minimumHeightCssPx) {
+        MathRenderRequest(
+            tex = tex,
+            displayMode = false,
+            fontSizePx = fontSizeCssPx,
+            textColorCss = textColorCss,
+            minimumHeightPx = minimumHeightCssPx
+        )
+    }
 
     MathJaxFormulaView(
-        tex = tex,
-        displayMode = false,
-        fontSizePx = fontSizeCssPx,
-        textColorCss = textColorCss,
-        minimumHeightPx = minimumHeightCssPx,
+        request = request,
         modifier = Modifier.fillMaxSize()
     )
 }
@@ -184,48 +204,43 @@ internal fun DisplayMathView(
     val textColorCss = remember(textColor) {
         formatCssColor(textColor)
     }
-    var measuredHeightCssPx by remember(tex, fontSizeCssPx, textColorCss) {
-        mutableIntStateOf(minimumHeightCssPx)
+    val request = remember(tex, fontSizeCssPx, textColorCss, minimumHeightCssPx) {
+        MathRenderRequest(
+            tex = tex,
+            displayMode = true,
+            fontSizePx = fontSizeCssPx,
+            textColorCss = textColorCss,
+            minimumHeightPx = minimumHeightCssPx
+        )
+    }
+    var measuredHeightCssPx by remember(request) {
+        mutableIntStateOf(MathJaxDisplayHeightCache.get(request) ?: minimumHeightCssPx)
     }
 
     MathJaxFormulaView(
-        tex = tex,
-        displayMode = true,
-        fontSizePx = fontSizeCssPx,
-        textColorCss = textColorCss,
-        minimumHeightPx = minimumHeightCssPx,
+        request = request,
         modifier = modifier.height(measuredHeightCssPx.dp),
         onMeasured = { heightPx ->
-            measuredHeightCssPx = heightPx.coerceAtLeast(minimumHeightCssPx)
+            val resolvedHeightPx = heightPx.coerceAtLeast(minimumHeightCssPx)
+            measuredHeightCssPx = resolvedHeightPx
+            MathJaxDisplayHeightCache.put(request, resolvedHeightPx)
         }
     )
 }
 
 @Composable
 private fun MathJaxFormulaView(
-    tex: String,
-    displayMode: Boolean,
-    fontSizePx: Int,
-    textColorCss: String,
-    minimumHeightPx: Int,
+    request: MathRenderRequest,
     modifier: Modifier = Modifier,
     onMeasured: (Int) -> Unit = {}
 ) {
-    val request = remember(tex, displayMode, fontSizePx, textColorCss, minimumHeightPx) {
-        MathRenderRequest(
-            tex = tex,
-            displayMode = displayMode,
-            fontSizePx = fontSizePx,
-            textColorCss = textColorCss,
-            minimumHeightPx = minimumHeightPx
-        )
-    }
-
     AndroidView(
         modifier = modifier,
         factory = { context -> MathJaxWebView(context) },
+        onReset = { webView -> webView.prepareForReuse() },
+        onRelease = { webView -> webView.releaseResources() },
         update = { webView ->
-            webView.contentDescription = tex
+            webView.contentDescription = request.tex
             webView.setRenderRequest(request, onMeasured)
         }
     )
@@ -238,6 +253,7 @@ private class MathJaxWebView(context: Context) : WebView(context) {
     private var pendingRequest: MathRenderRequest? = null
     private var onMeasured: ((Int) -> Unit)? = null
     private var renderRetryCount = 0
+    private val renderRetryRunnable = Runnable { renderPendingRequest() }
 
     init {
         setBackgroundColor(android.graphics.Color.TRANSPARENT)
@@ -285,6 +301,21 @@ private class MathJaxWebView(context: Context) : WebView(context) {
         renderPendingRequest()
     }
 
+    fun prepareForReuse() {
+        removeCallbacks(renderRetryRunnable)
+        pendingRequest = null
+        onMeasured = null
+        renderRetryCount = 0
+    }
+
+    fun releaseResources() {
+        prepareForReuse()
+        renderedRequest = null
+        pageLoaded = false
+        loadUrl("about:blank")
+        destroy()
+    }
+
     private fun renderPendingRequest() {
         val request = pendingRequest ?: return
         if (!pageLoaded) return
@@ -322,11 +353,19 @@ private class MathJaxWebView(context: Context) : WebView(context) {
         if (renderRetryCount >= MAX_MATH_JAX_RENDER_RETRIES) return
 
         renderRetryCount += 1
-        postDelayed(
-            { renderPendingRequest() },
-            MATH_JAX_RENDER_RETRY_DELAY_MILLIS
-        )
+        removeCallbacks(renderRetryRunnable)
+        postDelayed(renderRetryRunnable, MATH_JAX_RENDER_RETRY_DELAY_MILLIS)
     }
+}
+
+private fun MathRenderRequest.cacheKey(): String = buildString(tex.length + 32) {
+    append(displayMode)
+    append('|')
+    append(fontSizePx)
+    append('|')
+    append(textColorCss)
+    append('|')
+    append(tex)
 }
 
 private fun buildRenderScript(request: MathRenderRequest): String = """
