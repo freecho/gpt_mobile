@@ -111,7 +111,7 @@ fun ChatMarkdown(
             token.placeholder to InlineTextContent(
                 placeholder = Placeholder(
                     width = inlineMathWidth(token.tex),
-                    height = 1.4.em,
+                    height = inlineMathHeight(token.tex),
                     placeholderVerticalAlign = PlaceholderVerticalAlign.Center
                 )
             ) {
@@ -334,6 +334,29 @@ private fun appendTextWithInlineMath(
 }
 
 private fun inlineMathWidth(tex: String) = (tex.length.coerceIn(2, 24) * 0.55f).em
+
+private fun inlineMathHeight(tex: String) = when {
+    tex.containsDisplaySizedMath() -> 3.2.em
+    tex.containsSuperscriptOrSubscriptMath() -> 2.1.em
+    else -> 1.6.em
+}
+
+private fun String.containsDisplaySizedMath(): Boolean = listOf(
+    "\\frac",
+    "\\dfrac",
+    "\\tfrac",
+    "\\sum",
+    "\\prod",
+    "\\int",
+    "\\oint",
+    "\\lim",
+    "\\begin",
+    "\\left",
+    "\\right",
+    "\\over"
+).any(::contains)
+
+private fun String.containsSuperscriptOrSubscriptMath(): Boolean = contains('^') || contains('_')
 
 private fun buildCombinedMarkdown(blocks: List<ChatMarkdownBlock>): String = buildString {
     var displayMathIndex = 0

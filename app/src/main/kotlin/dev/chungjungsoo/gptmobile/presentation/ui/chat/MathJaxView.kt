@@ -25,8 +25,8 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 
 private const val MATH_JAX_BASE_URL = "file:///android_asset/mathjax/"
-private const val MATH_JAX_RENDER_RETRY_DELAY_MILLIS = 32L
-private const val MAX_MATH_JAX_RENDER_RETRIES = 4
+private const val MATH_JAX_RENDER_RETRY_DELAY_MILLIS = 50L
+private const val MAX_MATH_JAX_RENDER_RETRIES = 60
 
 private const val MATH_JAX_HTML = """
 <!DOCTYPE html>
@@ -51,12 +51,13 @@ body.display {
 #root {
   display: inline-block;
   margin: 0;
-  padding: 0;
+  padding: 2px 0;
 }
 #root.display {
   display: block;
   width: 100%;
   text-align: center;
+  padding: 8px 0;
 }
 #root pre {
   margin: 0;
@@ -96,7 +97,7 @@ window.MathJax = {
 <script>
 window.renderMath = function(expression, displayMode, textColor, fontSizePx) {
   if (!window.mathJaxReady || !window.MathJax || typeof MathJax.tex2svg !== 'function') {
-    return null;
+    return 'loading';
   }
 
   const root = document.getElementById('root');
@@ -114,8 +115,11 @@ window.renderMath = function(expression, displayMode, textColor, fontSizePx) {
     root.replaceChildren(fallback);
   }
 
-  const rect = root.getBoundingClientRect();
-  return Math.max(Math.ceil(rect.width), 1) + '|' + Math.max(Math.ceil(rect.height), 1);
+  const measuredNode = root.firstElementChild || root;
+  const rect = measuredNode.getBoundingClientRect();
+  const width = Math.max(Math.ceil(rect.width), Math.ceil(root.scrollWidth), 1);
+  const height = Math.max(Math.ceil(rect.height), Math.ceil(root.scrollHeight), 1);
+  return width + '|' + height;
 };
 </script>
 </head>
@@ -287,13 +291,14 @@ private class MathJaxWebView(context: Context) : WebView(context) {
         if (!pageLoaded) return
 
         evaluateJavascript(buildRenderScript(request)) { rawResult ->
+            if (rawResult == "\"loading\"") {
+                scheduleRenderRetry()
+                return@evaluateJavascript
+            }
+
             val measuredBounds = parseMeasuredBounds(rawResult)
-            if (measuredBounds == null && renderRetryCount < MAX_MATH_JAX_RENDER_RETRIES) {
-                renderRetryCount += 1
-                postDelayed(
-                    { renderPendingRequest() },
-                    MATH_JAX_RENDER_RETRY_DELAY_MILLIS
-                )
+            if (measuredBounds == null) {
+                scheduleRenderRetry()
                 return@evaluateJavascript
             }
 
@@ -301,8 +306,18 @@ private class MathJaxWebView(context: Context) : WebView(context) {
             pendingRequest = null
             renderRetryCount = 0
 
-            onMeasured?.invoke(max(measuredBounds?.second ?: 0, request.minimumHeightPx))
+            onMeasured?.invoke(max(measuredBounds.second, request.minimumHeightPx))
         }
+    }
+
+    private fun scheduleRenderRetry() {
+        if (renderRetryCount >= MAX_MATH_JAX_RENDER_RETRIES) return
+
+        renderRetryCount += 1
+        postDelayed(
+            { renderPendingRequest() },
+            MATH_JAX_RENDER_RETRY_DELAY_MILLIS
+        )
     }
 }
 
