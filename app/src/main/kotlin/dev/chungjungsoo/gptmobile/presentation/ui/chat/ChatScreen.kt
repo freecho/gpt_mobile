@@ -14,13 +14,11 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
@@ -515,6 +513,7 @@ fun ChatInputBox(
     val localStyle = LocalTextStyle.current
     val mergedStyle = localStyle.merge(TextStyle(color = LocalContentColor.current))
     val context = LocalContext.current
+    val chatInputMaxLines = 5
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -537,19 +536,18 @@ fun ChatInputBox(
             )
         }
         BasicTextField(
-            modifier = Modifier
-                .heightIn(max = 120.dp),
             value = value,
             enabled = chatEnabled,
             textStyle = mergedStyle,
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            minLines = 1,
+            maxLines = chatInputMaxLines,
             onValueChange = { if (chatEnabled) onValueChange(it) },
             decorationBox = { innerTextField ->
                 Row(
                     modifier = Modifier
                         .padding(horizontal = 16.dp, vertical = 8.dp)
                         .fillMaxWidth()
-                        .height(IntrinsicSize.Min)
                         .background(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(size = 24.dp))
                         .padding(all = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -566,8 +564,8 @@ fun ChatInputBox(
                     Box(
                         modifier = Modifier
                             .weight(1f)
-                            .align(Alignment.CenterVertically)
                             .padding(start = 8.dp)
+                            .heightIn(max = 120.dp)
                     ) {
                         if (value.isEmpty()) {
                             Text(
@@ -575,7 +573,9 @@ fun ChatInputBox(
                                 text = if (chatEnabled) stringResource(R.string.ask_a_question) else stringResource(R.string.some_platforms_disabled)
                             )
                         }
-                        innerTextField()
+                        Box(modifier = Modifier.fillMaxWidth()) {
+                            innerTextField()
+                        }
                     }
                     IconButton(
                         enabled = chatEnabled && sendButtonEnabled,
