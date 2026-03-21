@@ -1,0 +1,262 @@
+package dev.chungjungsoo.gptmobile.presentation.ui.chat
+
+private const val INLINE_MATH_PLACEHOLDER_PREFIX = "CHAT_MATH_INLINE_"
+private const val INLINE_MATH_PLACEHOLDER_SUFFIX = "_TOKEN"
+
+data class ParsedChatMarkdown(
+    val blocks: List<ChatMarkdownBlock>,
+    val inlineMath: List<InlineMathToken>
+)
+
+sealed interface ChatMarkdownBlock {
+    data class Markdown(val content: String) : ChatMarkdownBlock
+
+    data class DisplayMath(val tex: String) : ChatMarkdownBlock
+}
+
+data class InlineMathToken(
+    val placeholder: String,
+    val tex: String
+)
+
+fun parseChatMarkdown(content: String): ParsedChatMarkdown {
+    val blocks = mutableListOf<ChatMarkdownBlock>()
+    val inlineMath = mutableListOf<InlineMathToken>()
+    val markdownBuffer = StringBuilder()
+    var index = 0
+
+    while (index < content.length) {
+        val fence = detectFenceDelimiter(content, index)
+        if (fence != null && isLineStart(content, index)) {
+            val fenceEnd = findFenceBlockEnd(content, index, fence)
+            markdownBuffer.append(content, index, fenceEnd)
+            index = fenceEnd
+            continue
+        }
+
+        val displayMath = detectDisplayMath(content, index)
+        if (displayMath != null) {
+            flushMarkdownBuffer(markdownBuffer, blocks, inlineMath)
+            blocks += ChatMarkdownBlock.DisplayMath(displayMath.tex)
+            index = displayMath.endExclusive
+            continue
+        }
+
+        markdownBuffer.append(content[index])
+        index++
+    }
+
+    flushMarkdownBuffer(markdownBuffer, blocks, inlineMath)
+    return ParsedChatMarkdown(blocks = blocks, inlineMath = inlineMath)
+}
+
+fun containsInlineMathPlaceholder(text: String): Boolean = text.contains(INLINE_MATH_PLACEHOLDER_PREFIX)
+
+private data class DisplayMathMatch(
+    val tex: String,
+    val endExclusive: Int
+)
+
+private fun flushMarkdownBuffer(
+    markdownBuffer: StringBuilder,
+    blocks: MutableList<ChatMarkdownBlock>,
+    inlineMath: MutableList<InlineMathToken>
+) {
+    if (markdownBuffer.isEmpty()) return
+
+    val replacedContent = replaceInlineMath(
+        content = markdownBuffer.toString(),
+        startingIndex = inlineMath.size,
+        tokens = inlineMath
+    )
+    if (replacedContent.isNotBlank()) {
+        blocks += ChatMarkdownBlock.Markdown(replacedContent)
+    }
+    markdownBuffer.clear()
+}
+
+private fun replaceInlineMath(
+    content: String,
+    startingIndex: Int,
+    tokens: MutableList<InlineMathToken>
+): String {
+    val output = StringBuilder()
+    var inlineMathIndex = startingIndex
+    var index = 0
+
+    while (index < content.length) {
+        val fence = detectFenceDelimiter(content, index)
+        if (fence != null && isLineStart(content, index)) {
+            val fenceEnd = findFenceBlockEnd(content, index, fence)
+            output.append(content, index, fenceEnd)
+            index = fenceEnd
+            continue
+        }
+
+        val backtickCount = detectBacktickRun(content, index)
+        if (backtickCount > 0) {
+            val codeEnd = findInlineCodeEnd(content, index + backtickCount, backtickCount)
+            output.append(content, index, codeEnd)
+            index = codeEnd
+            continue
+        }
+
+        if (!isEscaped(content, index) && content.startsWith("\\(", index)) {
+            val end = findClosingDelimiter(content, index + 2, "\\)")
+            if (end != -1) {
+                val tex = content.substring(index + 2, end)
+                val placeholder = createPlaceholder(inlineMathIndex++)
+                tokens += InlineMathToken(placeholder = placeholder, tex = tex)
+                output.append(placeholder)
+                index = end + 2
+                continue
+            }
+        }
+
+        if (
+            content[index] == '$' &&
+            !isEscaped(content, index) &&
+            content.getOrNull(index + 1) != '$'
+        ) {
+            val end = findClosingInlineDollar(content, index + 1)
+            if (end != -1) {
+                val tex = content.substring(index + 1, end)
+                val placeholder = createPlaceholder(inlineMathIndex++)
+                tokens += InlineMathToken(placeholder = placeholder, tex = tex)
+                output.append(placeholder)
+                index = end + 1
+                continue
+            }
+        }
+
+        output.append(content[index])
+        index++
+    }
+
+    return output.toString()
+}
+
+private fun detectDisplayMath(content: String, index: Int): DisplayMathMatch? {
+    if (isEscaped(content, index)) return null
+
+    if (content.startsWith("\\[", index)) {
+        val end = findClosingDelimiter(content, index + 2, "\\]")
+        if (end != -1) {
+            return DisplayMathMatch(
+                tex = content.substring(index + 2, end).trim(),
+                endExclusive = end + 2
+            )
+        }
+    }
+
+    if (content.startsWith("$$", index)) {
+        val end = findClosingDelimiter(content, index + 2, "$$")
+        if (end != -1) {
+            return DisplayMathMatch(
+                tex = content.substring(index + 2, end).trim(),
+                endExclusive = end + 2
+            )
+        }
+    }
+
+    return null
+}
+
+private fun detectFenceDelimiter(content: String, index: Int): String? {
+    if (index >= content.length) return null
+    if (content[index] != '`' && content[index] != '~') return null
+
+    val marker = content[index]
+    var end = index
+    while (end < content.length && content[end] == marker) {
+        end++
+    }
+
+    val fenceLength = end - index
+    return if (fenceLength >= 3) content.substring(index, end) else null
+}
+
+private fun findFenceBlockEnd(content: String, start: Int, fence: String): Int {
+    var index = content.indexOf('\n', start)
+    if (index == -1) return content.length
+    index++
+
+    while (index < content.length) {
+        if (isLineStart(content, index) && content.startsWith(fence, index)) {
+            val lineEnd = content.indexOf('\n', index).let { if (it == -1) content.length else it + 1 }
+            return lineEnd
+        }
+        index = content.indexOf('\n', index).let { if (it == -1) content.length else it + 1 }
+    }
+
+    return content.length
+}
+
+private fun detectBacktickRun(content: String, index: Int): Int {
+    if (content.getOrNull(index) != '`') return 0
+    var end = index
+    while (end < content.length && content[end] == '`') {
+        end++
+    }
+    return end - index
+}
+
+private fun findInlineCodeEnd(content: String, start: Int, backtickCount: Int): Int {
+    var index = start
+    while (index < content.length) {
+        if (content[index] == '`') {
+            val runLength = detectBacktickRun(content, index)
+            if (runLength == backtickCount) {
+                return index + runLength
+            }
+            index += runLength
+        } else {
+            index++
+        }
+    }
+    return content.length
+}
+
+private fun findClosingDelimiter(content: String, start: Int, delimiter: String): Int {
+    var index = start
+    while (index <= content.length - delimiter.length) {
+        if (!isEscaped(content, index) && content.startsWith(delimiter, index)) {
+            return index
+        }
+        index++
+    }
+    return -1
+}
+
+private fun findClosingInlineDollar(content: String, start: Int): Int {
+    if (content.getOrNull(start)?.isWhitespace() == true) return -1
+
+    var index = start
+    while (index < content.length) {
+        val char = content[index]
+        if (char == '\n') return -1
+        if (
+            char == '$' &&
+            !isEscaped(content, index) &&
+            content.getOrNull(index - 1)?.isWhitespace() != true
+        ) {
+            return index
+        }
+        index++
+    }
+    return -1
+}
+
+private fun createPlaceholder(index: Int): String = "$INLINE_MATH_PLACEHOLDER_PREFIX$index$INLINE_MATH_PLACEHOLDER_SUFFIX"
+
+private fun isLineStart(content: String, index: Int): Boolean = index == 0 || content[index - 1] == '\n'
+
+private fun isEscaped(content: String, index: Int): Boolean {
+    var backslashCount = 0
+    var current = index - 1
+    while (current >= 0 && content[current] == '\\') {
+        backslashCount++
+        current--
+    }
+    return backslashCount % 2 == 1
+}
