@@ -1,6 +1,8 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
 import android.content.ClipData
+import android.util.TypedValue
+import android.widget.TextView
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -47,6 +49,7 @@ import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeBlock
 import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
 import com.mikepenz.markdown.compose.elements.MarkdownParagraph
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownTypography
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownInlineContent
 import dev.chungjungsoo.gptmobile.R
@@ -78,6 +81,7 @@ fun ChatMarkdown(
     val inlineMathByPlaceholder = remember(parsed.inlineMath) {
         parsed.inlineMath.associateBy { it.placeholder }
     }
+    val typography = chatMarkdownTypography()
     val displayMathByPlaceholder = remember(parsed.blocks) {
         parsed.blocks
             .filterIsInstance<ChatMarkdownBlock.DisplayMath>()
@@ -171,6 +175,7 @@ fun ChatMarkdown(
         inlineContent = markdownInlineContent(inlineContent),
         annotator = annotator,
         components = components,
+        typography = typography,
         modifier = modifier
     )
 }
@@ -277,6 +282,21 @@ private fun StringBuilder.currentLinePrefix(): String? {
 private fun createDisplayMathPlaceholder(index: Int): String = "$DISPLAY_MATH_PLACEHOLDER_PREFIX$index$DISPLAY_MATH_PLACEHOLDER_SUFFIX"
 
 @Composable
+private fun chatMarkdownTypography() = markdownTypography(
+    h1 = MaterialTheme.typography.headlineMedium,
+    h2 = MaterialTheme.typography.headlineSmall,
+    h3 = MaterialTheme.typography.titleLarge,
+    h4 = MaterialTheme.typography.titleMedium,
+    h5 = MaterialTheme.typography.titleSmall,
+    h6 = MaterialTheme.typography.labelLarge,
+    text = MaterialTheme.typography.bodyMedium,
+    paragraph = MaterialTheme.typography.bodyMedium,
+    ordered = MaterialTheme.typography.bodyMedium,
+    bullet = MaterialTheme.typography.bodyMedium,
+    list = MaterialTheme.typography.bodyMedium
+)
+
+@Composable
 private fun DefaultParagraph(
     content: String,
     node: org.intellij.markdown.ast.ASTNode,
@@ -338,16 +358,84 @@ private fun MathViewContent(
     AndroidView(
         modifier = modifier,
         factory = { context ->
-            MathView(context).apply {
-                setBackgroundColor(Color.Transparent.toArgb())
-                setViewBackgroundColor(Color.Transparent.toArgb())
-                setClickable(false)
+            runCatching {
+                MathView(context).apply {
+                    setBackgroundColor(Color.Transparent.toArgb())
+                    setViewBackgroundColor(Color.Transparent.toArgb())
+                    setClickable(false)
+                }
+            }.getOrElse {
+                createMathFallbackView(
+                    context = context,
+                    renderedText = renderedText,
+                    textColor = textColor.toArgb(),
+                    textSizePx = textSizePx
+                )
             }
         },
         update = { view ->
-            view.setTextColor(textColor.toArgb())
-            view.setTextSize(textSizePx)
-            view.setDisplayText(renderedText)
+            when (view) {
+                is MathView -> runCatching {
+                    view.setTextColor(textColor.toArgb())
+                    view.setTextSize(textSizePx)
+                    view.setDisplayText(renderedText)
+                }.getOrElse {
+                    view.loadDataWithBaseURL(
+                        null,
+                        createMathFallbackHtml(renderedText, textColor.toArgb(), textSizePx),
+                        "text/html",
+                        "UTF-8",
+                        null
+                    )
+                }
+
+                is TextView -> {
+                    view.text = renderedText
+                    view.setTextColor(textColor.toArgb())
+                    view.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx.toFloat())
+                }
+            }
         }
     )
+}
+
+private fun createMathFallbackView(
+    context: android.content.Context,
+    renderedText: String,
+    textColor: Int,
+    textSizePx: Int
+) = TextView(context).apply {
+    text = renderedText
+    setTextColor(textColor)
+    setTextSize(TypedValue.COMPLEX_UNIT_PX, textSizePx.toFloat())
+    setBackgroundColor(Color.Transparent.toArgb())
+}
+
+private fun createMathFallbackHtml(
+    renderedText: String,
+    textColor: Int,
+    textSizePx: Int
+): String = """
+    <html>
+      <body style="margin:0;padding:0;color:${formatColor(textColor)};font-size:${textSizePx}px;">
+        <pre style="margin:0;white-space:pre-wrap;">${escapeHtml(renderedText)}</pre>
+      </body>
+    </html>
+""".trimIndent()
+
+private fun formatColor(color: Int): String = String.format("#%06X", 0xFFFFFF and color)
+
+private fun escapeHtml(text: String): String = buildString(text.length) {
+    text.forEach { character ->
+        append(
+            when (character) {
+                '&' -> "&amp;"
+                '<' -> "&lt;"
+                '>' -> "&gt;"
+                '"' -> "&quot;"
+                '\'' -> "&#39;"
+                else -> character
+            }
+        )
+    }
 }
