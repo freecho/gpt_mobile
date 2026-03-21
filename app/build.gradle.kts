@@ -104,6 +104,7 @@ dependencies {
     implementation(libs.compose.markdown)
     implementation(libs.richtext)
     implementation(libs.markdown.renderer)
+    implementation(libs.markdown.renderer.m3)
     implementation(libs.markdown.renderer.code)
     implementation(libs.katex.math.view)
 

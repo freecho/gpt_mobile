@@ -44,9 +44,6 @@ import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import com.halilibo.richtext.commonmark.CommonmarkAstNodeParser
-import com.halilibo.richtext.markdown.BasicMarkdown
-import com.halilibo.richtext.ui.material3.RichText
 import dev.chungjungsoo.gptmobile.R
 import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 import java.io.File
@@ -64,8 +61,6 @@ fun UserChatBubble(
         disabledContentColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
         disabledContainerColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.38f)
     )
-    val parser = remember { CommonmarkAstNodeParser() }
-    val astNode = remember(text) { parser.parse(text.trimIndent()) }
     Log.d("UserChatBubble", "files: $files (size: ${files.size})")
     files.forEachIndexed { index, file ->
         Log.d("UserChatBubble", "files[$index] = '$file' (length: ${file.length})")
@@ -80,9 +75,10 @@ fun UserChatBubble(
             shape = RoundedCornerShape(32.dp),
             colors = cardColor
         ) {
-            RichText(modifier = Modifier.padding(16.dp)) {
-                BasicMarkdown(astNode = astNode)
-            }
+            ChatMarkdown(
+                content = text.trimIndent(),
+                modifier = Modifier.padding(16.dp)
+            )
         }
         UserFileThumbnailRow(files = files)
     }
@@ -125,17 +121,14 @@ fun OpponentChatBubble(
                 shape = RoundedCornerShape(0.dp),
                 colors = cardColor
             ) {
-                val parser = remember { CommonmarkAstNodeParser() }
                 val displayText = if (isLoading) text.trimIndent() + "●" else text.trimIndent()
-                val astNode = remember(displayText) { parser.parse(displayText) }
 
-                RichText(
+                ChatMarkdown(
+                    content = displayText,
                     modifier = Modifier
                         .padding(16.dp)
                         .then(if (isLoading) Modifier.animateContentSize() else Modifier)
-                ) {
-                    BasicMarkdown(astNode = astNode)
-                }
+                )
             }
 
             if (!isLoading) {
