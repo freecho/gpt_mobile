@@ -67,7 +67,7 @@ object DatabaseModule {
                             val model = platformModelMap[platformUid] ?: ""
                             db.execSQL(
                                 "INSERT OR REPLACE INTO chat_platform_model_v2 (chat_id, platform_uid, model, updated_at) VALUES (?, ?, ?, ?)",
-                                arrayOf(chatId, platformUid, model, currentTimestamp)
+                                arrayOf<Any>(chatId, platformUid, model, currentTimestamp)
                             )
                         }
                 }
