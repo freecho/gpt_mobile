@@ -1,7 +1,5 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
-import android.util.Log
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -66,10 +64,6 @@ fun UserChatBubble(
     )
     val parser = remember { CommonmarkAstNodeParser() }
     val astNode = remember(text) { parser.parse(text.trimIndent()) }
-    Log.d("UserChatBubble", "files: $files (size: ${files.size})")
-    files.forEachIndexed { index, file ->
-        Log.d("UserChatBubble", "files[$index] = '$file' (length: ${file.length})")
-    }
 
     Column(horizontalAlignment = Alignment.End) {
         Card(
@@ -132,7 +126,6 @@ fun OpponentChatBubble(
                 RichText(
                     modifier = Modifier
                         .padding(16.dp)
-                        .then(if (isLoading) Modifier.animateContentSize() else Modifier)
                 ) {
                     BasicMarkdown(astNode = astNode)
                 }
@@ -288,9 +281,6 @@ fun OpponentChatBubblePreview() {
 private fun UserFileThumbnailRow(files: List<String>) {
     // Filter out empty strings and check if we have valid files
     val validFiles = files.filter { it.isNotEmpty() && it.isNotBlank() }
-
-    Log.d("UserFileThumbnailRow", "Original files: $files (size: ${files.size})")
-    Log.d("UserFileThumbnailRow", "Valid files: $validFiles (size: ${validFiles.size})")
 
     if (validFiles.isEmpty()) {
         return
