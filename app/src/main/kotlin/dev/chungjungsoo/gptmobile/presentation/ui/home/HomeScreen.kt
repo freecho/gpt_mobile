@@ -358,16 +358,18 @@ fun HomeTopAppBar(
         actions = {
             when {
                 isSelectionMode -> {
-                    IconButton(
-                        modifier = Modifier.padding(4.dp),
-                        enabled = selectedChats == 1,
-                        onClick = duplicateOnClick
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ContentCopy,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            contentDescription = stringResource(R.string.duplicate)
-                        )
+                    if (selectedChats == 1) {
+                        IconButton(
+                            modifier = Modifier.padding(4.dp),
+                            enabled = true,
+                            onClick = duplicateOnClick
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ContentCopy,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                contentDescription = stringResource(R.string.duplicate)
+                            )
+                        }
                     }
                     IconButton(
                         modifier = Modifier.padding(4.dp),
