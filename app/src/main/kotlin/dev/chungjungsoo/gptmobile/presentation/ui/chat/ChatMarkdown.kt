@@ -25,6 +25,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -72,7 +73,7 @@ private const val DISPLAY_MATH_PLACEHOLDER_SUFFIX = "_TOKEN"
 @Composable
 fun ChatMarkdown(
     content: String,
-    isStreaming: Boolean = false,
+    contentIdentity: Any = content,
     modifier: Modifier = Modifier
 ) {
     val isDarkTheme = isSystemInDarkTheme()
@@ -188,21 +189,23 @@ fun ChatMarkdown(
             }
         )
     }
-    val markdownState = rememberMarkdownState(
-        content = combinedMarkdown,
-        retainState = isStreaming
-    )
-    val animations = markdownAnimations(animateTextSize = { this })
+    key(contentIdentity) {
+        val markdownState = rememberMarkdownState(
+            content = combinedMarkdown,
+            retainState = true
+        )
+        val animations = markdownAnimations(animateTextSize = { this })
 
-    Markdown(
-        markdownState = markdownState,
-        inlineContent = markdownInlineContent(inlineContent),
-        annotator = annotator,
-        components = components,
-        typography = chatMarkdownTypography(),
-        animations = animations,
-        modifier = modifier
-    )
+        Markdown(
+            markdownState = markdownState,
+            inlineContent = markdownInlineContent(inlineContent),
+            annotator = annotator,
+            components = components,
+            typography = chatMarkdownTypography(),
+            animations = animations,
+            modifier = modifier
+        )
+    }
 }
 
 @Composable

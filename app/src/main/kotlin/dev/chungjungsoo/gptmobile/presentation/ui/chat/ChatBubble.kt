@@ -70,7 +70,6 @@ fun UserChatBubble(
         ) {
             ChatMarkdown(
                 content = text,
-                isStreaming = false,
                 modifier = Modifier.padding(16.dp)
             )
         }
@@ -86,6 +85,7 @@ fun OpponentChatBubble(
     isError: Boolean = false,
     text: String,
     thoughts: String = "",
+    contentIdentity: Any = text,
     onCopyClick: () -> Unit = {},
     onSelectClick: () -> Unit = {},
     onRetryClick: () -> Unit = {}
@@ -106,6 +106,7 @@ fun OpponentChatBubble(
             ThinkingBlock(
                 modifier = Modifier.padding(top = 16.dp, start = 8.dp, end = 8.dp),
                 thoughts = thoughts,
+                contentIdentity = contentIdentity,
                 isLoading = isThinking
             )
         }
@@ -119,7 +120,7 @@ fun OpponentChatBubble(
 
                 ChatMarkdown(
                     content = displayText,
-                    isStreaming = isLoading,
+                    contentIdentity = contentIdentity,
                     modifier = Modifier
                         .padding(16.dp)
                 )

@@ -38,6 +38,7 @@ import dev.chungjungsoo.gptmobile.presentation.theme.GPTMobileTheme
 fun ThinkingBlock(
     modifier: Modifier = Modifier,
     thoughts: String,
+    contentIdentity: Any = thoughts,
     isLoading: Boolean = false
 ) {
     if (thoughts.isBlank()) return
@@ -105,7 +106,7 @@ fun ThinkingBlock(
 
             ChatMarkdown(
                 content = displayText,
-                isStreaming = isLoading,
+                contentIdentity = contentIdentity,
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = 12.dp, end = 12.dp, bottom = 12.dp)
