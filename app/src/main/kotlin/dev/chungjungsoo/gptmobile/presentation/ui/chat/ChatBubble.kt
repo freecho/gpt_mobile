@@ -1,7 +1,5 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
-import android.util.Log
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -31,7 +29,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,10 +58,6 @@ fun UserChatBubble(
         disabledContentColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.38f),
         disabledContainerColor = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.38f)
     )
-    Log.d("UserChatBubble", "files: $files (size: ${files.size})")
-    files.forEachIndexed { index, file ->
-        Log.d("UserChatBubble", "files[$index] = '$file' (length: ${file.length})")
-    }
 
     Column(horizontalAlignment = Alignment.End) {
         Card(
@@ -127,7 +120,6 @@ fun OpponentChatBubble(
                     content = displayText,
                     modifier = Modifier
                         .padding(16.dp)
-                        .then(if (isLoading) Modifier.animateContentSize() else Modifier)
                 )
             }
 
@@ -281,9 +273,6 @@ fun OpponentChatBubblePreview() {
 private fun UserFileThumbnailRow(files: List<String>) {
     // Filter out empty strings and check if we have valid files
     val validFiles = files.filter { it.isNotEmpty() && it.isNotBlank() }
-
-    Log.d("UserFileThumbnailRow", "Original files: $files (size: ${files.size})")
-    Log.d("UserFileThumbnailRow", "Valid files: $validFiles (size: ${validFiles.size})")
 
     if (validFiles.isEmpty()) {
         return
