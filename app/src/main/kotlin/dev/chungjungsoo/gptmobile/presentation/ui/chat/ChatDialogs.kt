@@ -169,6 +169,7 @@ fun ChatQuestionEditDialog(
     val screenWidth = with(LocalDensity.current) { configuration.containerSize.width.toDp() }
     val screenHeight = with(LocalDensity.current) { configuration.containerSize.height.toDp() }
     var question by remember { mutableStateOf(initialQuestion.content) }
+    val questionFieldMaxLines = 8
 
     AlertDialog(
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -177,9 +178,7 @@ fun ChatQuestionEditDialog(
             .heightIn(max = screenHeight - 80.dp),
         title = { Text(text = stringResource(R.string.edit_question)) },
         text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState())
-            ) {
+            Column {
                 OutlinedTextField(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -187,6 +186,8 @@ fun ChatQuestionEditDialog(
                         .padding(horizontal = 20.dp, vertical = 16.dp),
                     value = question,
                     onValueChange = { question = it },
+                    minLines = 3,
+                    maxLines = questionFieldMaxLines,
                     label = { Text(stringResource(R.string.user_message)) }
                 )
             }
