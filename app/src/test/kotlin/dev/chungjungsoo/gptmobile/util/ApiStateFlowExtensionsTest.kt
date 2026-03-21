@@ -3,11 +3,11 @@ package dev.chungjungsoo.gptmobile.util
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.presentation.ui.chat.ChatViewModel
-import junit.framework.TestCase.assertEquals
-import junit.framework.TestCase.assertTrue
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ApiStateFlowExtensionsTest {
@@ -43,5 +43,12 @@ class ApiStateFlowExtensionsTest {
         val assistantContent = messageFlow.value.assistantMessages.last().first().content
         assertTrue(assistantContent.contains("Partial answer"))
         assertTrue(assistantContent.contains("[Response stopped: Request timed out.]"))
+    }
+
+    @Test
+    fun `stripAssistantErrorNote removes appended stop note from assistant history`() {
+        val content = "Partial answer\n\n[Response stopped: Request timed out.]"
+
+        assertEquals("Partial answer", stripAssistantErrorNote(content))
     }
 }

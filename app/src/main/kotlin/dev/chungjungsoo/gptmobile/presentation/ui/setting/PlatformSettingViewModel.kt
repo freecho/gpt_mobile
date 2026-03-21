@@ -136,7 +136,8 @@ class PlatformSettingViewModel @Inject constructor(
 
     fun updateTimeout(timeoutSeconds: Int) {
         _platformState.value?.let { platform ->
-            updatePlatform(platform.copy(timeout = timeoutSeconds))
+            val normalizedTimeout = timeoutSeconds.coerceAtLeast(0)
+            updatePlatform(platform.copy(timeout = normalizedTimeout))
             closeTimeoutDialog()
         }
     }

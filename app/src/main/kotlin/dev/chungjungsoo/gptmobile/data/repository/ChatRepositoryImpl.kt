@@ -50,6 +50,7 @@ import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.util.FileUtils
+import dev.chungjungsoo.gptmobile.util.stripAssistantErrorNote
 import javax.inject.Inject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
@@ -280,10 +281,11 @@ class ChatRepositoryImpl @Inject constructor(
 
     private fun transformMessageV2ToChatMessage(message: MessageV2, isUser: Boolean): ChatMessage {
         val content = mutableListOf<OpenAIMessageContent>()
+        val messageContent = if (isUser) message.content else stripAssistantErrorNote(message.content)
 
         // Add text content
-        if (message.content.isNotBlank()) {
-            content.add(OpenAITextContent(text = message.content))
+        if (messageContent.isNotBlank()) {
+            content.add(OpenAITextContent(text = messageContent))
         }
 
         // Add file content (images)
@@ -309,6 +311,7 @@ class ChatRepositoryImpl @Inject constructor(
 
     private fun transformMessageV2ToResponsesInput(message: MessageV2, isUser: Boolean): ResponseInputMessage {
         val role = if (isUser) "user" else "assistant"
+        val messageContent = if (isUser) message.content else stripAssistantErrorNote(message.content)
 
         // Check if there are any image files
         val imageFiles = message.files.filter { fileUri ->
@@ -320,7 +323,7 @@ class ChatRepositoryImpl @Inject constructor(
         if (imageFiles.isEmpty()) {
             return ResponseInputMessage(
                 role = role,
-                content = ResponseInputContent.text(message.content)
+                content = ResponseInputContent.text(messageContent)
             )
         }
 
@@ -328,8 +331,8 @@ class ChatRepositoryImpl @Inject constructor(
         val parts = mutableListOf<ResponseContentPart>()
 
         // Add text content if not blank
-        if (message.content.isNotBlank()) {
-            parts.add(ResponseContentPart.text(message.content))
+        if (messageContent.isNotBlank()) {
+            parts.add(ResponseContentPart.text(messageContent))
         }
 
         // Add image content
@@ -431,10 +434,11 @@ class ChatRepositoryImpl @Inject constructor(
 
     private fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole): InputMessage {
         val content = mutableListOf<AnthropicMessageContent>()
+        val messageContent = if (role == MessageRole.USER) message.content else stripAssistantErrorNote(message.content)
 
         // Add text content
-        if (message.content.isNotBlank()) {
-            content.add(AnthropicTextContent(text = message.content))
+        if (messageContent.isNotBlank()) {
+            content.add(AnthropicTextContent(text = messageContent))
         }
 
         // Add file content (images)
@@ -546,10 +550,11 @@ class ChatRepositoryImpl @Inject constructor(
 
     private fun transformMessageV2ToGoogle(message: MessageV2, role: GoogleRole): Content {
         val parts = mutableListOf<Part>()
+        val messageContent = if (role == GoogleRole.USER) message.content else stripAssistantErrorNote(message.content)
 
         // Add text content
-        if (message.content.isNotBlank()) {
-            parts.add(Part.text(message.content))
+        if (messageContent.isNotBlank()) {
+            parts.add(Part.text(messageContent))
         }
 
         // Add file content (images)
