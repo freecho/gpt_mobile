@@ -82,15 +82,45 @@ svg {
 }
 </style>
 <script>
+(() => {
+  const storageFactory = () => {
+    const store = {};
+    return {
+      getItem(key) {
+        return Object.prototype.hasOwnProperty.call(store, key) ? store[key] : null;
+      },
+      setItem(key, value) {
+        store[key] = String(value);
+      },
+      removeItem(key) {
+        delete store[key];
+      },
+      clear() {
+        Object.keys(store).forEach((key) => delete store[key]);
+      }
+    };
+  };
+  try {
+    if (!window.localStorage) {
+      Object.defineProperty(window, 'localStorage', {value: storageFactory(), configurable: true});
+    }
+  } catch (error) {
+    Object.defineProperty(window, 'localStorage', {value: storageFactory(), configurable: true});
+  }
+})();
 window.mathJaxReady = false;
 window.MathJax = {
   options: {
     enableMenu: false,
     enableEnrichment: false,
     enableComplexity: false,
-    enableAssistiveMml: false,
     enableSpeech: false,
     enableBraille: false,
+    renderActions: {
+      addMenu: [],
+      checkLoading: [],
+      assistiveMml: []
+    },
     menuOptions: {
       settings: {
         enrich: false,
@@ -311,11 +341,10 @@ private class MathJaxWebView(context: Context) : WebView(context) {
     ) {
         this.onMeasured = onMeasured
         if (request == renderedRequest && pendingRequest == null) {
-            alpha = 1f
             return
         }
 
-        alpha = 0f
+        clearRenderedContent()
         pendingRequest = request
         renderRetryCount = 0
         renderPendingRequest()
@@ -323,7 +352,8 @@ private class MathJaxWebView(context: Context) : WebView(context) {
 
     fun prepareForReuse() {
         removeCallbacks(renderRetryRunnable)
-        alpha = 0f
+        clearRenderedContent()
+        renderedRequest = null
         pendingRequest = null
         onMeasured = null
         renderRetryCount = 0
@@ -366,7 +396,6 @@ private class MathJaxWebView(context: Context) : WebView(context) {
             pendingRequest = null
             renderRetryCount = 0
 
-            alpha = 1f
             onMeasured?.invoke(max(measuredBounds.second, request.minimumHeightPx))
         }
     }
@@ -377,6 +406,23 @@ private class MathJaxWebView(context: Context) : WebView(context) {
         renderRetryCount += 1
         removeCallbacks(renderRetryRunnable)
         postDelayed(renderRetryRunnable, MATH_JAX_RENDER_RETRY_DELAY_MILLIS)
+    }
+
+    private fun clearRenderedContent() {
+        if (!pageLoaded) return
+
+        evaluateJavascript(
+            """
+            (function() {
+              const root = document.getElementById('root');
+              if (root) {
+                root.replaceChildren();
+              }
+              return true;
+            })();
+            """.trimIndent(),
+            null
+        )
     }
 }
 
