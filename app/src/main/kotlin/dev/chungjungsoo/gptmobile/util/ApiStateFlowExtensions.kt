@@ -60,7 +60,7 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setErrorMessage(plat
     update { groupedMessages ->
         val updatedMessages = groupedMessages.assistantMessages.last().toMutableList()
         updatedMessages[platformIdx] = updatedMessages[platformIdx].copy(
-            content = "Error: $error",
+            content = buildAssistantErrorContent(updatedMessages[platformIdx].content, error),
             createdAt = System.currentTimeMillis() / 1000
         )
         val assistantMessages = groupedMessages.assistantMessages.toMutableList()
@@ -68,6 +68,11 @@ private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setErrorMessage(plat
 
         groupedMessages.copy(assistantMessages = assistantMessages)
     }
+}
+
+internal fun buildAssistantErrorContent(existingContent: String, error: String): String = when {
+    existingContent.isBlank() -> "Error: $error"
+    else -> "$existingContent\n\n[Response stopped: $error]"
 }
 
 private fun MutableStateFlow<ChatViewModel.GroupedMessages>.setTimestamp(platformIdx: Int) {
