@@ -1,21 +1,37 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
+import android.content.ClipData
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.text.InlineTextContent
 import androidx.compose.foundation.text.appendInlineContent
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.Placeholder
 import androidx.compose.ui.text.PlaceholderVerticalAlign
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.viewinterop.AndroidView
@@ -25,9 +41,11 @@ import com.mikepenz.markdown.compose.elements.MarkdownHighlightedCodeFence
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.model.markdownAnnotator
 import com.mikepenz.markdown.model.markdownInlineContent
+import dev.chungjungsoo.gptmobile.R
 import dev.snipme.highlights.Highlights
 import dev.snipme.highlights.model.SyntaxThemes
 import katex.hourglass.`in`.mathlib.MathView
+import kotlinx.coroutines.launch
 
 @Composable
 fun ChatMarkdown(
@@ -35,6 +53,8 @@ fun ChatMarkdown(
     modifier: Modifier = Modifier
 ) {
     val isDarkTheme = isSystemInDarkTheme()
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
     val parsed = remember(content) { parseChatMarkdown(content) }
     val highlightsBuilder = remember(isDarkTheme) {
         Highlights.Builder().theme(SyntaxThemes.atom(isDarkTheme))
@@ -66,25 +86,45 @@ fun ChatMarkdown(
             }
         }
     }
-    val components = remember(highlightsBuilder) {
+    val components = remember(clipboard, highlightsBuilder) {
         markdownComponents(
             codeBlock = {
-                MarkdownHighlightedCodeBlock(
-                    it.content,
-                    it.node,
-                    it.typography.code,
-                    highlightsBuilder,
-                    true
-                )
+                CodeBlockWithCopy(
+                    code = it.content,
+                    textStyleSize = it.typography.code.fontSize,
+                    onCopyCode = {
+                        scope.launch {
+                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(it, it)))
+                        }
+                    }
+                ) {
+                    MarkdownHighlightedCodeBlock(
+                        it.content,
+                        it.node,
+                        it.typography.code,
+                        highlightsBuilder,
+                        false
+                    )
+                }
             },
             codeFence = {
-                MarkdownHighlightedCodeFence(
-                    it.content,
-                    it.node,
-                    it.typography.code,
-                    highlightsBuilder,
-                    true
-                )
+                CodeBlockWithCopy(
+                    code = it.content,
+                    textStyleSize = it.typography.code.fontSize,
+                    onCopyCode = {
+                        scope.launch {
+                            clipboard.setClipEntry(ClipEntry(ClipData.newPlainText(it, it)))
+                        }
+                    }
+                ) {
+                    MarkdownHighlightedCodeFence(
+                        it.content,
+                        it.node,
+                        it.typography.code,
+                        highlightsBuilder,
+                        false
+                    )
+                }
             }
         )
     }
@@ -111,6 +151,39 @@ fun ChatMarkdown(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun CodeBlockWithCopy(
+    code: String,
+    textStyleSize: TextUnit,
+    onCopyCode: (String) -> Unit,
+    content: @Composable () -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = stringResource(R.string.code),
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = textStyleSize)
+            )
+            IconButton(
+                modifier = Modifier.size(20.dp),
+                onClick = { onCopyCode(code) }
+            ) {
+                Icon(
+                    imageVector = ImageVector.vectorResource(R.drawable.ic_copy),
+                    contentDescription = stringResource(R.string.copy_text)
+                )
+            }
+        }
+        Spacer(modifier = Modifier.size(4.dp))
+        content()
     }
 }
 
