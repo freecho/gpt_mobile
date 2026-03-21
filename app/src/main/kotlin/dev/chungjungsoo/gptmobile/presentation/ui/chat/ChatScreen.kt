@@ -129,15 +129,22 @@ fun ChatScreen(
     val canUseChat = (chatViewModel.enabledPlatformsInChat.toSet() - appEnabledPlatforms.map { it.uid }.toSet()).isEmpty()
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
     val context = LocalContext.current
+    val lastMessageIndex = groupedMessages.userMessages.lastIndex
 
     val scope = rememberCoroutineScope()
 
+    suspend fun animateScrollToLatestMessage() {
+        if (lastMessageIndex >= 0) {
+            listState.animateScrollToItem(lastMessageIndex)
+        }
+    }
+
     LaunchedEffect(isIdle) {
-        listState.animateScrollToItem(groupedMessages.userMessages.size * 2)
+        animateScrollToLatestMessage()
     }
 
     LaunchedEffect(isLoaded) {
-        listState.animateScrollToItem(groupedMessages.userMessages.size * 2)
+        animateScrollToLatestMessage()
     }
 
     // Auto-scroll to bottom when keyboard opens
@@ -145,7 +152,7 @@ fun ChatScreen(
     LaunchedEffect(imeVisible) {
         if (imeVisible) {
             delay(100) // Small delay to let keyboard animation start
-            listState.animateScrollToItem(groupedMessages.userMessages.size * 2)
+            animateScrollToLatestMessage()
         }
     }
 
@@ -185,15 +192,10 @@ fun ChatScreen(
                     modifier = Modifier.fillMaxSize(),
                     state = listState
                 ) {
-                    val lastMessageIndex = groupedMessages.userMessages.lastIndex
-                    val historicalMessageIndices = if (lastMessageIndex > 0) {
-                        List(lastMessageIndex) { it }
-                    } else {
-                        emptyList()
-                    }
+                    val historicalMessageCount = lastMessageIndex.coerceAtLeast(0)
 
                     items(
-                        items = historicalMessageIndices,
+                        count = historicalMessageCount,
                         key = { index -> chatMessagePairKey(groupedMessages.userMessages[index], index) }
                     ) { index ->
                         ChatMessagePair(
@@ -259,7 +261,7 @@ fun ChatScreen(
                     ) {
                         ScrollToBottomButton {
                             scope.launch {
-                                listState.animateScrollToItem(groupedMessages.userMessages.size * 2)
+                                animateScrollToLatestMessage()
                             }
                         }
                     }
@@ -603,7 +605,7 @@ fun ChatInputBox(
     val mergedStyle = localStyle.merge(TextStyle(color = LocalContentColor.current))
     val context = LocalContext.current
     val chatInputLineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5)
-    val hasQuestionText = inputState.text.any { !it.isWhitespace() }
+    val hasQuestionText = inputState.text.isNotEmpty()
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()

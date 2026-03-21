@@ -12,40 +12,50 @@ private const val STREAM_PUBLISH_INTERVAL_MILLIS = 50L
 suspend fun Flow<ApiState>.handleStates(
     messageFlow: MutableStateFlow<ChatViewModel.GroupedMessages>,
     platformIdx: Int,
-    onLoadingComplete: () -> Unit
+    onLoadingComplete: () -> Unit,
+    nanoTimeProvider: () -> Long = System::nanoTime
 ) {
-    val buffer = StreamingMessageBuffer()
+    val buffer = StreamingMessageBuffer(nanoTimeProvider = nanoTimeProvider)
+    var isCompletedSuccessfully = false
+    var terminalError: String? = null
 
-    collect { chunk ->
-        when (chunk) {
-            is ApiState.Thinking -> {
-                buffer.appendThought(chunk.thinkingChunk)
-                buffer.publishIfDue(messageFlow, platformIdx)
+    try {
+        collect { chunk ->
+            when (chunk) {
+                is ApiState.Thinking -> {
+                    buffer.appendThought(chunk.thinkingChunk)
+                    buffer.publishIfDue(messageFlow, platformIdx)
+                }
+
+                is ApiState.Success -> {
+                    buffer.appendContent(chunk.textChunk)
+                    buffer.publishIfDue(messageFlow, platformIdx)
+                }
+
+                ApiState.Done -> {
+                    isCompletedSuccessfully = true
+                }
+
+                is ApiState.Error -> {
+                    terminalError = chunk.message
+                }
+
+                else -> {}
             }
-
-            is ApiState.Success -> {
-                buffer.appendContent(chunk.textChunk)
-                buffer.publishIfDue(messageFlow, platformIdx)
-            }
-
-            ApiState.Done -> {
-                buffer.flush(messageFlow, platformIdx)
-                messageFlow.setTimestamp(platformIdx)
-                onLoadingComplete()
-            }
-
-            is ApiState.Error -> {
-                buffer.flush(messageFlow, platformIdx)
-                messageFlow.setErrorMessage(platformIdx, chunk.message)
-                onLoadingComplete()
-            }
-
-            else -> {}
         }
+    } finally {
+        buffer.flush(messageFlow, platformIdx)
+        when {
+            terminalError != null -> messageFlow.setErrorMessage(platformIdx, terminalError)
+            isCompletedSuccessfully -> messageFlow.setTimestamp(platformIdx)
+        }
+        onLoadingComplete()
     }
 }
 
-private class StreamingMessageBuffer {
+private class StreamingMessageBuffer(
+    private val nanoTimeProvider: () -> Long
+) {
     private val thoughts = StringBuilder()
     private val content = StringBuilder()
     private var lastPublishedAtNanos = 0L
@@ -70,7 +80,7 @@ private class StreamingMessageBuffer {
     ) {
         if (!hasPendingChanges()) return
 
-        val now = System.nanoTime()
+        val now = nanoTimeProvider()
         if (lastPublishedAtNanos == 0L ||
             now - lastPublishedAtNanos >= STREAM_PUBLISH_INTERVAL_MILLIS * 1_000_000
         ) {
@@ -83,7 +93,7 @@ private class StreamingMessageBuffer {
         platformIdx: Int
     ) {
         if (!hasPendingChanges()) return
-        publish(messageFlow, platformIdx, System.nanoTime())
+        publish(messageFlow, platformIdx, nanoTimeProvider())
     }
 
     private fun publish(
