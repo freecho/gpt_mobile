@@ -15,12 +15,19 @@ import java.util.Base64
 
 object FileUtils {
     private const val TAG = "FileUtils"
+    const val MAX_UPLOAD_SIZE_BYTES = 50L * 1024 * 1024
     private const val MAX_IMAGE_UPLOAD_DIMENSION = 2048
-    private const val IMAGE_UPLOAD_QUALITY = 85
+    private const val IMAGE_UPLOAD_QUALITY = 95
 
     data class EncodedImage(
         val mimeType: String,
         val base64Data: String
+    )
+
+    data class AttachmentPreparationResult(
+        val preparedFilePath: String,
+        val mimeType: String,
+        val wasResized: Boolean
     )
 
     /**
@@ -34,7 +41,7 @@ object FileUtils {
      * @return Base64-encoded upload payload, or null if error
      */
     fun readAndEncodeFile(context: Context, uriString: String): String? = try {
-        readAndEncodeImageForUpload(context, uriString)?.base64Data ?: encodeFileToBase64(context, uriString)
+        encodeFileForUpload(context, uriString, getMimeType(context, uriString))?.base64Data
     } catch (e: Exception) {
         Log.e(TAG, "Failed to encode file for upload: $uriString", e)
         null
@@ -56,21 +63,45 @@ object FileUtils {
 
     internal fun readAndEncodeImageForUpload(context: Context, uriString: String, mimeType: String): EncodedImage? {
         if (!isImage(mimeType)) return null
+        return encodeFileForUpload(context, uriString, mimeType)
+    }
 
-        return when (mimeType) {
-            "image/gif", "image/svg+xml" -> {
-                encodeFileToBase64(context, uriString)?.let { base64 ->
-                    EncodedImage(mimeType = mimeType, base64Data = base64)
-                }
-            }
-
-            else -> {
-                readAndEncodeScaledImage(context, uriString, mimeType)
-                    ?: encodeFileToBase64(context, uriString)?.let { base64 ->
-                        EncodedImage(mimeType = mimeType, base64Data = base64)
-                    }
-            }
+    fun prepareAttachmentForUpload(context: Context, filePath: String): AttachmentPreparationResult? {
+        val mimeType = getMimeType(context, filePath)
+        if (!validateFileSize(context, filePath, MAX_UPLOAD_SIZE_BYTES)) return null
+        if (!isImage(mimeType) || mimeType == "image/gif" || mimeType == "image/svg+xml") {
+            return AttachmentPreparationResult(
+                preparedFilePath = filePath,
+                mimeType = mimeType,
+                wasResized = false
+            )
         }
+
+        val dimensions = getImageDimensions(context, filePath) ?: return AttachmentPreparationResult(
+            preparedFilePath = filePath,
+            mimeType = mimeType,
+            wasResized = false
+        )
+
+        if (!shouldResizeImage(dimensions.first, dimensions.second)) {
+            return AttachmentPreparationResult(
+                preparedFilePath = filePath,
+                mimeType = mimeType,
+                wasResized = false
+            )
+        }
+
+        val resizedImagePath = createResizedImageCopy(context, filePath, mimeType) ?: return null
+        return AttachmentPreparationResult(
+            preparedFilePath = resizedImagePath.preparedFilePath,
+            mimeType = resizedImagePath.mimeType,
+            wasResized = true
+        )
+    }
+
+    fun encodeFileForUpload(context: Context, filePath: String, mimeType: String): EncodedImage? {
+        val base64Data = encodeFileToBase64(context, filePath) ?: return null
+        return EncodedImage(mimeType = mimeType, base64Data = base64Data)
     }
 
     /**
@@ -213,13 +244,19 @@ object FileUtils {
      * Validate file size
      * @param context Android context for ContentResolver
      * @param uriString File URI as string
-     * @param maxSizeBytes Maximum allowed size in bytes (default 5MB)
+     * @param maxSizeBytes Maximum allowed size in bytes (default 50MB)
      * @return true if file size is within limit, false otherwise
      */
-    fun validateFileSize(context: Context, uriString: String, maxSizeBytes: Long = 5 * 1024 * 1024): Boolean {
+    fun validateFileSize(context: Context, uriString: String, maxSizeBytes: Long = MAX_UPLOAD_SIZE_BYTES): Boolean {
         val size = getFileSize(context, uriString)
         return size in 1..maxSizeBytes
     }
+
+    internal fun shouldResizeImage(
+        originalWidth: Int,
+        originalHeight: Int,
+        maxDimension: Int = MAX_IMAGE_UPLOAD_DIMENSION
+    ): Boolean = maxOf(originalWidth, originalHeight) > maxDimension
 
     internal fun calculateImageInSampleSize(
         originalWidth: Int,
@@ -253,7 +290,7 @@ object FileUtils {
         }
     }
 
-    private fun readAndEncodeScaledImage(context: Context, uriString: String, mimeType: String): EncodedImage? {
+    private fun getImageDimensions(context: Context, uriString: String): Pair<Int, Int>? {
         val boundsOptions = BitmapFactory.Options().apply {
             inJustDecodeBounds = true
         }
@@ -263,10 +300,15 @@ object FileUtils {
         } ?: return null
 
         if (boundsOptions.outWidth <= 0 || boundsOptions.outHeight <= 0) return null
+        return boundsOptions.outWidth to boundsOptions.outHeight
+    }
+
+    private fun createResizedImageCopy(context: Context, uriString: String, mimeType: String): AttachmentPreparationResult? {
+        val dimensions = getImageDimensions(context, uriString) ?: return null
 
         val (compressFormat, uploadMimeType) = resolveImageCompressFormat(mimeType)
         val decodeOptions = BitmapFactory.Options().apply {
-            inSampleSize = calculateImageInSampleSize(boundsOptions.outWidth, boundsOptions.outHeight)
+            inSampleSize = calculateImageInSampleSize(dimensions.first, dimensions.second)
             inPreferredConfig = if (shouldPreserveAlpha(uploadMimeType)) {
                 Bitmap.Config.ARGB_8888
             } else {
@@ -279,13 +321,19 @@ object FileUtils {
         } ?: return null
 
         return try {
-            val base64Data = encodeToBase64 { outputStream ->
-                bitmap.compress(compressFormat, IMAGE_UPLOAD_QUALITY, outputStream)
-            } ?: return null
-
-            EncodedImage(
+            val sourceFile = File(uriString.removePrefix("file://"))
+            val resizedFile = File(
+                sourceFile.parentFile ?: File("."),
+                "${sourceFile.nameWithoutExtension}_upload.${uploadMimeType.substringAfter('/')}"
+            )
+            resizedFile.outputStream().use { outputStream ->
+                val success = bitmap.compress(compressFormat, IMAGE_UPLOAD_QUALITY, outputStream)
+                if (!success) return null
+            }
+            AttachmentPreparationResult(
+                preparedFilePath = resizedFile.absolutePath,
                 mimeType = uploadMimeType,
-                base64Data = base64Data
+                wasResized = true
             )
         } finally {
             bitmap.recycle()
@@ -305,7 +353,7 @@ object FileUtils {
 
     private fun resolveImageCompressFormat(mimeType: String): Pair<Bitmap.CompressFormat, String> = when {
         mimeType.contains("png") -> Bitmap.CompressFormat.PNG to "image/png"
-        mimeType.contains("webp") -> Bitmap.CompressFormat.WEBP_LOSSY to "image/webp"
+        mimeType.contains("webp") -> Bitmap.CompressFormat.WEBP_LOSSLESS to "image/webp"
         else -> Bitmap.CompressFormat.JPEG to "image/jpeg"
     }
 }

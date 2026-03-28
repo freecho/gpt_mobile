@@ -22,6 +22,13 @@ class FileUtilsTest {
     }
 
     @Test
+    fun `images resize only when they exceed dimension threshold`() {
+        assertTrue(FileUtils.shouldResizeImage(4096, 2048))
+        assertFalse(FileUtils.shouldResizeImage(2048, 2048))
+        assertFalse(FileUtils.shouldResizeImage(1600, 1200))
+    }
+
+    @Test
     fun `transparent upload formats preserve alpha capable bitmap config`() {
         assertTrue(FileUtils.shouldPreserveAlpha("image/png"))
         assertTrue(FileUtils.shouldPreserveAlpha("image/webp"))

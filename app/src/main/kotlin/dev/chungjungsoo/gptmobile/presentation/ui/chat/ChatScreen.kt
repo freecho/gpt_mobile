@@ -45,6 +45,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -121,7 +122,8 @@ fun ChatScreen(
     val isEditQuestionDialogOpen by chatViewModel.isEditQuestionDialogOpen.collectAsStateWithLifecycle()
     val isSelectTextSheetOpen by chatViewModel.isSelectTextSheetOpen.collectAsStateWithLifecycle()
     val isLoaded by chatViewModel.isLoaded.collectAsStateWithLifecycle()
-    val selectedFiles by chatViewModel.selectedFiles.collectAsStateWithLifecycle()
+    val selectedAttachments by chatViewModel.selectedAttachments.collectAsStateWithLifecycle()
+    val attachmentNotice by chatViewModel.attachmentNotice.collectAsStateWithLifecycle()
     val appEnabledPlatforms by chatViewModel.enabledPlatformsInApp.collectAsStateWithLifecycle()
     val appAllPlatforms by chatViewModel.platformsInApp.collectAsStateWithLifecycle()
     val chatPlatformModels by chatViewModel.chatPlatformModels.collectAsStateWithLifecycle()
@@ -145,6 +147,13 @@ fun ChatScreen(
 
     LaunchedEffect(isLoaded) {
         animateScrollToLatestMessage()
+    }
+
+    LaunchedEffect(attachmentNotice) {
+        attachmentNotice?.let { notice ->
+            Toast.makeText(context, notice, Toast.LENGTH_SHORT).show()
+            chatViewModel.consumeAttachmentNotice()
+        }
     }
 
     // Auto-scroll to bottom when keyboard opens
@@ -272,7 +281,7 @@ fun ChatScreen(
                 inputState = chatViewModel.question,
                 chatEnabled = canUseChat,
                 sendButtonEnabled = isIdle,
-                selectedFiles = selectedFiles,
+                selectedAttachments = selectedAttachments,
                 onFileSelected = { filePath -> chatViewModel.addSelectedFile(filePath) },
                 onFileRemoved = { filePath -> chatViewModel.removeSelectedFile(filePath) }
             ) {
@@ -598,7 +607,7 @@ fun ChatInputBox(
     inputState: TextFieldState = rememberTextFieldState(),
     chatEnabled: Boolean = true,
     sendButtonEnabled: Boolean = true,
-    selectedFiles: List<String> = emptyList(),
+    selectedAttachments: List<ChatAttachmentDraft> = emptyList(),
     onFileSelected: (String) -> Unit = {},
     onFileRemoved: (String) -> Unit = {},
     onSendButtonClick: () -> Unit = {}
@@ -623,9 +632,9 @@ fun ChatInputBox(
             .fillMaxWidth()
             .background(color = MaterialTheme.colorScheme.surface)
     ) {
-        if (selectedFiles.isNotEmpty()) {
+        if (selectedAttachments.isNotEmpty()) {
             FileThumbnailRow(
-                selectedFiles = selectedFiles,
+                selectedAttachments = selectedAttachments,
                 onFileRemoved = onFileRemoved
             )
         }
@@ -683,7 +692,7 @@ fun ChatInputBox(
 
 @Composable
 private fun FileThumbnailRow(
-    selectedFiles: List<String>,
+    selectedAttachments: List<ChatAttachmentDraft>,
     onFileRemoved: (String) -> Unit
 ) {
     Row(
@@ -693,10 +702,10 @@ private fun FileThumbnailRow(
             .horizontalScroll(rememberScrollState()),
         horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
     ) {
-        selectedFiles.forEach { filePath ->
+        selectedAttachments.forEach { attachment ->
             FileThumbnail(
-                filePath = filePath,
-                onRemove = { onFileRemoved(filePath) }
+                attachment = attachment,
+                onRemove = { onFileRemoved(attachment.sourceFilePath) }
             )
         }
     }
@@ -704,10 +713,10 @@ private fun FileThumbnailRow(
 
 @Composable
 private fun FileThumbnail(
-    filePath: String,
+    attachment: ChatAttachmentDraft,
     onRemove: () -> Unit
 ) {
-    val file = File(filePath)
+    val file = File(attachment.preparedFilePath ?: attachment.sourceFilePath)
     val isImage = isImageFile(file.extension)
 
     Column(
@@ -756,6 +765,16 @@ private fun FileThumbnail(
                     modifier = Modifier.size(10.dp)
                 )
             }
+
+            if (attachment.status == ChatAttachmentDraft.Status.Preparing) {
+                CircularProgressIndicator(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 4.dp)
+                        .size(18.dp),
+                    strokeWidth = 2.dp
+                )
+            }
         }
 
         Text(
@@ -769,6 +788,30 @@ private fun FileThumbnail(
                 .padding(top = 4.dp)
                 .width(72.dp)
         )
+
+        attachment.notice?.let { notice ->
+            Text(
+                text = notice,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.width(72.dp)
+            )
+        }
+
+        attachment.errorMessage?.let { errorMessage ->
+            Text(
+                text = errorMessage,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.width(72.dp)
+            )
+        }
     }
 }
 

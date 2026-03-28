@@ -49,14 +49,17 @@ import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
+import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
 import dev.chungjungsoo.gptmobile.util.stripAssistantErrorNote
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onCompletion
+import kotlinx.coroutines.withContext
 
 class ChatRepositoryImpl @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -279,7 +282,7 @@ class ChatRepositoryImpl @Inject constructor(
         flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
     }
 
-    private fun transformMessageV2ToChatMessage(message: MessageV2, isUser: Boolean): ChatMessage {
+    private suspend fun transformMessageV2ToChatMessage(message: MessageV2, isUser: Boolean): ChatMessage {
         val content = mutableListOf<OpenAIMessageContent>()
         val messageContent = if (isUser) message.content else stripAssistantErrorNote(message.content)
 
@@ -291,7 +294,7 @@ class ChatRepositoryImpl @Inject constructor(
         // Add file content (images)
         message.files.forEach { fileUri ->
             val mimeType = FileUtils.getMimeType(context, fileUri)
-            val encodedImage = FileUtils.readAndEncodeImageForUpload(context, fileUri, mimeType)
+            val encodedImage = getEncodedAttachment(fileUri, mimeType)
             if (encodedImage != null) {
                 content.add(
                     OpenAIImageContent(
@@ -307,7 +310,7 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    private fun transformMessageV2ToResponsesInput(message: MessageV2, isUser: Boolean): ResponseInputMessage {
+    private suspend fun transformMessageV2ToResponsesInput(message: MessageV2, isUser: Boolean): ResponseInputMessage {
         val role = if (isUser) "user" else "assistant"
         val messageContent = if (isUser) message.content else stripAssistantErrorNote(message.content)
 
@@ -339,7 +342,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         // Add image content
         imageFiles.forEach { (fileUri, mimeType) ->
-            val encodedImage = FileUtils.readAndEncodeImageForUpload(context, fileUri, mimeType)
+            val encodedImage = getEncodedAttachment(fileUri, mimeType)
             if (encodedImage != null) {
                 parts.add(
                     ResponseContentPart.image(
@@ -439,7 +442,7 @@ class ChatRepositoryImpl @Inject constructor(
         flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
     }
 
-    private fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole): InputMessage {
+    private suspend fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole): InputMessage {
         val content = mutableListOf<AnthropicMessageContent>()
         val messageContent = if (role == MessageRole.USER) message.content else stripAssistantErrorNote(message.content)
 
@@ -451,7 +454,7 @@ class ChatRepositoryImpl @Inject constructor(
         // Add file content (images)
         message.files.forEach { fileUri ->
             val mimeType = FileUtils.getMimeType(context, fileUri)
-            val encodedImage = FileUtils.readAndEncodeImageForUpload(context, fileUri, mimeType)
+            val encodedImage = getEncodedAttachment(fileUri, mimeType)
             if (encodedImage != null) {
                 val mediaType = when {
                     encodedImage.mimeType.contains("jpeg") || encodedImage.mimeType.contains("jpg") -> MediaType.JPEG
@@ -553,7 +556,7 @@ class ChatRepositoryImpl @Inject constructor(
         flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
     }
 
-    private fun transformMessageV2ToGoogle(message: MessageV2, role: GoogleRole): Content {
+    private suspend fun transformMessageV2ToGoogle(message: MessageV2, role: GoogleRole): Content {
         val parts = mutableListOf<Part>()
         val messageContent = if (role == GoogleRole.USER) message.content else stripAssistantErrorNote(message.content)
 
@@ -565,13 +568,23 @@ class ChatRepositoryImpl @Inject constructor(
         // Add file content (images)
         message.files.forEach { fileUri ->
             val mimeType = FileUtils.getMimeType(context, fileUri)
-            val encodedImage = FileUtils.readAndEncodeImageForUpload(context, fileUri, mimeType)
+            val encodedImage = getEncodedAttachment(fileUri, mimeType)
             if (encodedImage != null) {
                 parts.add(Part.inlineData(encodedImage.mimeType, encodedImage.base64Data))
             }
         }
 
         return Content(role = role, parts = parts)
+    }
+
+    private suspend fun getEncodedAttachment(filePath: String, mimeType: String): FileUtils.EncodedImage? {
+        AttachmentPayloadCache.get(filePath)?.let { return it }
+
+        return withContext(Dispatchers.IO) {
+            FileUtils.encodeFileForUpload(context, filePath, mimeType)?.also { encodedImage ->
+                AttachmentPayloadCache.put(filePath, encodedImage)
+            }
+        }
     }
 
     override suspend fun fetchChatList(): List<ChatRoom> = chatRoomDao.getChatRooms()

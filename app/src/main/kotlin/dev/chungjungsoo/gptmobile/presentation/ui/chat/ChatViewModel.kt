@@ -1,27 +1,34 @@
 package dev.chungjungsoo.gptmobile.presentation.ui.chat
 
+import android.content.Context
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.foundation.text.input.clearText
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
+import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
+import dev.chungjungsoo.gptmobile.util.FileUtils
 import dev.chungjungsoo.gptmobile.util.getPlatformName
 import dev.chungjungsoo.gptmobile.util.handleStates
 import javax.inject.Inject
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @HiltViewModel
 class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
+    @param:ApplicationContext private val context: Context,
     private val chatRepository: ChatRepository,
     private val settingRepository: SettingRepository
 ) : ViewModel() {
@@ -71,9 +78,12 @@ class ChatViewModel @Inject constructor(
     // User input used for the chat composer
     val question = TextFieldState()
 
-    // Selected files for current message
-    private val _selectedFiles = MutableStateFlow(listOf<String>())
-    val selectedFiles = _selectedFiles.asStateFlow()
+    // Selected attachment drafts for current message
+    private val _selectedAttachments = MutableStateFlow(listOf<ChatAttachmentDraft>())
+    val selectedAttachments = _selectedAttachments.asStateFlow()
+
+    private val _attachmentNotice = MutableStateFlow<String?>(null)
+    val attachmentNotice = _attachmentNotice.asStateFlow()
 
     // Chat messages currently in the chat room
     private val _groupedMessages = MutableStateFlow(GroupedMessages())
@@ -100,6 +110,8 @@ class ChatViewModel @Inject constructor(
     private val _isLoaded = MutableStateFlow(false)
     val isLoaded = _isLoaded.asStateFlow()
 
+    private var pendingQuestionText: String? = null
+
     init {
         fetchChatRoom()
         viewModelScope.launch { fetchMessages() }
@@ -122,17 +134,20 @@ class ChatViewModel @Inject constructor(
     fun askQuestion() {
         val questionText = question.text.toString()
         if (questionText.isBlank()) return
+        if (_selectedAttachments.value.any { it.status == ChatAttachmentDraft.Status.Failed }) {
+            _attachmentNotice.update { "Remove failed attachments before sending." }
+            return
+        }
 
-        MessageV2(
-            chatId = chatRoomId,
-            content = questionText,
-            files = _selectedFiles.value,
-            platformType = null,
-            createdAt = currentTimeStamp
-        ).let { addMessage(it) }
-        question.clearText()
-        clearSelectedFiles()
-        completeChat()
+        if (_selectedAttachments.value.any { it.status == ChatAttachmentDraft.Status.Preparing }) {
+            pendingQuestionText = questionText
+            question.clearText()
+            _loadingStates.update { List(enabledPlatformsInChat.size) { LoadingState.Loading } }
+            trySendPendingQuestionIfReady()
+            return
+        }
+
+        sendQuestion(questionText, _selectedAttachments.value)
     }
 
     fun closeChatTitleDialog() = _isChatTitleDialogOpen.update { false }
@@ -229,23 +244,31 @@ class ChatViewModel @Inject constructor(
     }
 
     fun addSelectedFile(filePath: String) {
-        _selectedFiles.update { currentFiles ->
-            if (filePath !in currentFiles) {
-                currentFiles + filePath
-            } else {
-                currentFiles
-            }
+        if (_selectedAttachments.value.any { it.sourceFilePath == filePath }) {
+            return
         }
+
+        _selectedAttachments.update { currentFiles ->
+            currentFiles + ChatAttachmentDraft(sourceFilePath = filePath)
+        }
+        preprocessAttachment(filePath)
     }
 
     fun removeSelectedFile(filePath: String) {
-        _selectedFiles.update { currentFiles ->
-            currentFiles.filter { it != filePath }
+        val removedAttachment = _selectedAttachments.value.firstOrNull { it.sourceFilePath == filePath }
+        removedAttachment?.preparedFilePath?.let { AttachmentPayloadCache.remove(it) }
+        _selectedAttachments.update { currentFiles ->
+            currentFiles.filter { it.sourceFilePath != filePath }
         }
+        trySendPendingQuestionIfReady()
     }
 
     fun clearSelectedFiles() {
-        _selectedFiles.update { emptyList() }
+        _selectedAttachments.update { emptyList() }
+    }
+
+    fun consumeAttachmentNotice() {
+        _attachmentNotice.update { null }
     }
 
     fun editQuestion(editedMessage: MessageV2) {
@@ -347,6 +370,98 @@ class ChatViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    private fun preprocessAttachment(filePath: String) {
+        viewModelScope.launch {
+            val fileSize = withContext(Dispatchers.IO) {
+                FileUtils.getFileSize(context, filePath)
+            }
+
+            if (fileSize > FileUtils.MAX_UPLOAD_SIZE_BYTES) {
+                _selectedAttachments.update { attachments ->
+                    attachments.filter { it.sourceFilePath != filePath }
+                }
+                _attachmentNotice.update { "Files larger than 50 MB cannot be attached." }
+                return@launch
+            }
+
+            val preparationResult = withContext(Dispatchers.IO) {
+                val preparedAttachment = FileUtils.prepareAttachmentForUpload(context, filePath) ?: return@withContext null
+                val encodedImage = FileUtils.encodeFileForUpload(
+                    context,
+                    preparedAttachment.preparedFilePath,
+                    preparedAttachment.mimeType
+                ) ?: return@withContext null
+
+                AttachmentPayloadCache.put(preparedAttachment.preparedFilePath, encodedImage)
+                preparedAttachment
+            }
+
+            _selectedAttachments.update { attachments ->
+                attachments.map { attachment ->
+                    if (attachment.sourceFilePath != filePath) {
+                        attachment
+                    } else if (preparationResult == null) {
+                        attachment.copy(
+                            status = ChatAttachmentDraft.Status.Failed,
+                            errorMessage = "Failed to prepare attachment."
+                        )
+                    } else {
+                        attachment.copy(
+                            preparedFilePath = preparationResult.preparedFilePath,
+                            mimeType = preparationResult.mimeType,
+                            status = ChatAttachmentDraft.Status.Ready,
+                            notice = if (preparationResult.wasResized) {
+                                "Large images are resized before upload."
+                            } else {
+                                null
+                            },
+                            errorMessage = null
+                        )
+                    }
+                }
+            }
+
+            if (preparationResult?.wasResized == true) {
+                _attachmentNotice.update { "Large images are resized before upload." }
+            } else if (preparationResult == null) {
+                _attachmentNotice.update { "Failed to prepare attachment." }
+            }
+
+            trySendPendingQuestionIfReady()
+        }
+    }
+
+    private fun trySendPendingQuestionIfReady() {
+        val queuedQuestion = pendingQuestionText ?: return
+        val attachments = _selectedAttachments.value
+
+        if (attachments.any { it.status == ChatAttachmentDraft.Status.Failed }) {
+            pendingQuestionText = null
+            _loadingStates.update { List(enabledPlatformsInChat.size) { LoadingState.Idle } }
+            return
+        }
+
+        if (attachments.any { it.status == ChatAttachmentDraft.Status.Preparing }) {
+            return
+        }
+
+        pendingQuestionText = null
+        sendQuestion(queuedQuestion, attachments)
+    }
+
+    private fun sendQuestion(questionText: String, attachments: List<ChatAttachmentDraft>) {
+        MessageV2(
+            chatId = chatRoomId,
+            content = questionText,
+            files = attachments.mapNotNull { it.preparedFilePath },
+            platformType = null,
+            createdAt = currentTimeStamp
+        ).let { addMessage(it) }
+        question.clearText()
+        clearSelectedFiles()
+        completeChat()
     }
 
     private fun formatCurrentDateTime(): String {
