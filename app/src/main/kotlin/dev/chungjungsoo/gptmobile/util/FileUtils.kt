@@ -168,6 +168,8 @@ object FileUtils {
         "application/octet-stream"
     }
 
+    fun getMimeTypeFromPath(path: String): String = getMimeTypeFromExtension(path)
+
     /**
      * Get MIME type from file extension
      * @param filename File name or path
@@ -320,6 +322,8 @@ object FileUtils {
             null
         }
     }
+
+    fun getImageDimensionsForDisplay(context: Context, uriString: String): Pair<Int, Int>? = getImageDimensions(context, uriString)
 
     private fun getImageDimensions(context: Context, uriString: String): Pair<Int, Int>? {
         val boundsOptions = BitmapFactory.Options().apply {

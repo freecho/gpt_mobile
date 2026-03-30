@@ -12,6 +12,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import dev.chungjungsoo.gptmobile.data.database.entity.ChatRoomV2
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
@@ -31,7 +32,8 @@ class ChatViewModel @Inject constructor(
     savedStateHandle: SavedStateHandle,
     @param:ApplicationContext private val context: Context,
     private val chatRepository: ChatRepository,
-    private val settingRepository: SettingRepository
+    private val settingRepository: SettingRepository,
+    private val attachmentUploadCoordinator: AttachmentUploadCoordinator
 ) : ViewModel() {
     sealed class LoadingState {
         data object Idle : LoadingState()
@@ -419,22 +421,14 @@ class ChatViewModel @Inject constructor(
             }
 
             val preparationResult = withContext(Dispatchers.IO) {
-                val preparedAttachment = FileUtils.prepareAttachmentForUpload(context, filePath) ?: return@withContext null
-                val encodedImage = FileUtils.encodeFileForUpload(
-                    context,
-                    preparedAttachment.preparedFilePath,
-                    preparedAttachment.mimeType
-                ) ?: return@withContext null
+                attachmentUploadCoordinator.prepareLocalAttachment(context, filePath)
+            }
 
-                if (_selectedAttachments.value.none { it.sourceFilePath == filePath }) {
-                    if (preparedAttachment.preparedFilePath != filePath) {
-                        java.io.File(preparedAttachment.preparedFilePath).delete()
-                    }
-                    return@withContext null
+            if (_selectedAttachments.value.none { it.sourceFilePath == filePath }) {
+                if (preparationResult != null && preparationResult.preparedFilePath != filePath) {
+                    java.io.File(preparationResult.preparedFilePath).delete()
                 }
-
-                AttachmentPayloadCache.put(preparedAttachment.preparedFilePath, encodedImage)
-                preparedAttachment
+                return@launch
             }
 
             _selectedAttachments.update { attachments ->
@@ -448,6 +442,7 @@ class ChatViewModel @Inject constructor(
                         )
                     } else {
                         attachment.copy(
+                            attachment = preparationResult,
                             preparedFilePath = preparationResult.preparedFilePath,
                             mimeType = preparationResult.mimeType,
                             status = ChatAttachmentDraft.Status.Ready,
@@ -501,7 +496,7 @@ class ChatViewModel @Inject constructor(
         MessageV2(
             chatId = chatRoomId,
             content = questionText,
-            files = attachments.mapNotNull { it.preparedFilePath },
+            attachments = attachments.mapNotNull { it.attachment },
             platformType = null,
             createdAt = currentTimeStamp
         ).let { addMessage(it) }

@@ -35,7 +35,8 @@ object ChatRepositoryModule {
         settingRepository: SettingRepository,
         openAIAPI: OpenAIAPI,
         anthropicAPI: AnthropicAPI,
-        googleAPI: GoogleAPI
+        googleAPI: GoogleAPI,
+        attachmentUploadCoordinator: dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator
     ): ChatRepository = ChatRepositoryImpl(
         context,
         chatRoomDao,
@@ -46,6 +47,7 @@ object ChatRepositoryModule {
         settingRepository,
         openAIAPI,
         anthropicAPI,
-        googleAPI
+        googleAPI,
+        attachmentUploadCoordinator
     )
 }

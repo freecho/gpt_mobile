@@ -381,7 +381,7 @@ private fun ChatMessagePair(
                 UserChatBubble(
                     modifier = Modifier.widthIn(max = maximumUserChatBubbleWidth),
                     text = message.content,
-                    files = message.files,
+                    files = message.attachments.map { it.filePathForDisplay },
                     onLongPress = { isDropDownMenuExpanded = true }
                 )
                 ChatBubbleDropdownMenu(

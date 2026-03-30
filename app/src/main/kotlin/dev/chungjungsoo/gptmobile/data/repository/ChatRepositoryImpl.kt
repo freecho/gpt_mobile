@@ -72,7 +72,8 @@ class ChatRepositoryImpl @Inject constructor(
     private val settingRepository: SettingRepository,
     private val openAIAPI: OpenAIAPI,
     private val anthropicAPI: AnthropicAPI,
-    private val googleAPI: GoogleAPI
+    private val googleAPI: GoogleAPI,
+    private val attachmentUploadCoordinator: AttachmentUploadCoordinator
 ) : ChatRepository {
 
     private fun isImageFile(extension: String): Boolean = extension in setOf("jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "svg")
@@ -145,16 +146,17 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
+                val preparedUserMessages = prepareMessagesForPlatform(userMessages, platform)
                 val inputMessages = mutableListOf<ResponseInputMessage>()
 
-                userMessages.forEachIndexed { index, userMsg ->
-                    inputMessages.add(transformMessageV2ToResponsesInput(userMsg, isUser = true))
+                preparedUserMessages.forEachIndexed { index, userMsg ->
+                    inputMessages.add(transformMessageV2ToResponsesInput(userMsg, isUser = true, platformUid = platform.uid))
 
                     if (index < assistantMessages.size) {
                         assistantMessages[index]
                             .firstOrNull { it.content.isNotBlank() && it.platformType == platform.uid }
                             ?.let { assistantMsg ->
-                                inputMessages.add(transformMessageV2ToResponsesInput(assistantMsg, isUser = false))
+                                inputMessages.add(transformMessageV2ToResponsesInput(assistantMsg, isUser = false, platformUid = platform.uid))
                             }
                     }
                 }
@@ -215,6 +217,7 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
+                attachmentUploadCoordinator.validateInlineAttachmentBudget(userMessages + assistantMessages.flatten())
                 val messages = mutableListOf<ChatMessage>()
 
                 platform.systemPrompt?.takeIf { it.isNotBlank() }?.let { systemPrompt ->
@@ -278,9 +281,10 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         // Add file content (images)
-        message.files.forEach { fileUri ->
-            val mimeType = FileUtils.getMimeType(context, fileUri)
-            val encodedImage = getEncodedAttachment(fileUri, mimeType)
+        message.attachments.forEach { attachment ->
+            val filePath = attachment.preparedFilePath.ifBlank { attachment.localFilePath }
+            val mimeType = attachment.mimeType.ifBlank { FileUtils.getMimeType(context, filePath) }
+            val encodedImage = getEncodedAttachment(filePath, mimeType)
             if (encodedImage != null) {
                 content.add(
                     OpenAIImageContent(
@@ -296,22 +300,19 @@ class ChatRepositoryImpl @Inject constructor(
         )
     }
 
-    private suspend fun transformMessageV2ToResponsesInput(message: MessageV2, isUser: Boolean): ResponseInputMessage {
+    private suspend fun transformMessageV2ToResponsesInput(message: MessageV2, isUser: Boolean, platformUid: String): ResponseInputMessage {
         val role = if (isUser) "user" else "assistant"
         val messageContent = if (isUser) message.content else stripAssistantErrorNote(message.content)
 
         // Check if there are any image files
-        val imageFiles = message.files.mapNotNull { fileUri ->
-            val mimeType = FileUtils.getMimeType(context, fileUri)
-            if (FileUtils.isImage(mimeType)) {
-                fileUri to mimeType
-            } else {
-                null
-            }
+        val imageAttachments = message.attachments.filter { attachment ->
+            val filePath = attachment.preparedFilePath.ifBlank { attachment.localFilePath }
+            val mimeType = attachment.mimeType.ifBlank { FileUtils.getMimeType(context, filePath) }
+            FileUtils.isImage(mimeType)
         }
 
         // If no images, use simple text content
-        if (imageFiles.isEmpty()) {
+        if (imageAttachments.isEmpty()) {
             return ResponseInputMessage(
                 role = role,
                 content = ResponseInputContent.text(messageContent)
@@ -327,14 +328,21 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         // Add image content
-        imageFiles.forEach { (fileUri, mimeType) ->
-            val encodedImage = getEncodedAttachment(fileUri, mimeType)
-            if (encodedImage != null) {
-                parts.add(
-                    ResponseContentPart.image(
-                        "data:${encodedImage.mimeType};base64,${encodedImage.base64Data}"
+        imageAttachments.forEach { attachment ->
+            val providerRef = attachment.providerRefFor(platformUid)
+            if (providerRef?.remoteType == dev.chungjungsoo.gptmobile.data.model.AttachmentRemoteType.OPENAI_FILE) {
+                parts.add(ResponseContentPart.imageFile(providerRef.remoteId))
+            } else {
+                val filePath = attachment.preparedFilePath.ifBlank { attachment.localFilePath }
+                val mimeType = attachment.mimeType.ifBlank { FileUtils.getMimeType(context, filePath) }
+                val encodedImage = getEncodedAttachment(filePath, mimeType)
+                if (encodedImage != null) {
+                    parts.add(
+                        ResponseContentPart.image(
+                            "data:${encodedImage.mimeType};base64,${encodedImage.base64Data}"
+                        )
                     )
-                )
+                }
             }
         }
 
@@ -356,16 +364,17 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
+                val preparedUserMessages = prepareMessagesForPlatform(userMessages, platform)
                 val messages = mutableListOf<InputMessage>()
 
-                userMessages.forEachIndexed { index, userMsg ->
-                    messages.add(transformMessageV2ToAnthropic(userMsg, MessageRole.USER))
+                preparedUserMessages.forEachIndexed { index, userMsg ->
+                    messages.add(transformMessageV2ToAnthropic(userMsg, MessageRole.USER, platform.uid))
 
                     if (index < assistantMessages.size) {
                         assistantMessages[index]
                             .firstOrNull { it.content.isNotBlank() && it.platformType == platform.uid }
                             ?.let { assistantMsg ->
-                                messages.add(transformMessageV2ToAnthropic(assistantMsg, MessageRole.ASSISTANT))
+                                messages.add(transformMessageV2ToAnthropic(assistantMsg, MessageRole.ASSISTANT, platform.uid))
                             }
                     }
                 }
@@ -424,7 +433,7 @@ class ChatRepositoryImpl @Inject constructor(
         flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
     }
 
-    private suspend fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole): InputMessage {
+    private suspend fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole, platformUid: String): InputMessage {
         val content = mutableListOf<AnthropicMessageContent>()
         val messageContent = if (role == MessageRole.USER) message.content else stripAssistantErrorNote(message.content)
 
@@ -434,27 +443,29 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         // Add file content (images)
-        message.files.forEach { fileUri ->
-            val mimeType = FileUtils.getMimeType(context, fileUri)
-            val encodedImage = getEncodedAttachment(fileUri, mimeType)
-            if (encodedImage != null) {
-                val mediaType = when {
-                    encodedImage.mimeType.contains("jpeg") || encodedImage.mimeType.contains("jpg") -> MediaType.JPEG
-                    encodedImage.mimeType.contains("png") -> MediaType.PNG
-                    encodedImage.mimeType.contains("gif") -> MediaType.GIF
-                    encodedImage.mimeType.contains("webp") -> MediaType.WEBP
-                    else -> MediaType.JPEG // Default
-                }
+        message.attachments.forEach { attachment ->
+            val providerRef = attachment.providerRefFor(platformUid)
+            if (providerRef?.remoteType == dev.chungjungsoo.gptmobile.data.model.AttachmentRemoteType.ANTHROPIC_FILE) {
+                content.add(AnthropicImageContent(source = ImageSource.file(providerRef.remoteId)))
+            } else {
+                val filePath = attachment.preparedFilePath.ifBlank { attachment.localFilePath }
+                val mimeType = attachment.mimeType.ifBlank { FileUtils.getMimeType(context, filePath) }
+                val encodedImage = getEncodedAttachment(filePath, mimeType)
+                if (encodedImage != null) {
+                    val mediaType = when {
+                        encodedImage.mimeType.contains("jpeg") || encodedImage.mimeType.contains("jpg") -> MediaType.JPEG
+                        encodedImage.mimeType.contains("png") -> MediaType.PNG
+                        encodedImage.mimeType.contains("gif") -> MediaType.GIF
+                        encodedImage.mimeType.contains("webp") -> MediaType.WEBP
+                        else -> MediaType.JPEG
+                    }
 
-                content.add(
-                    AnthropicImageContent(
-                        source = ImageSource(
-                            type = ImageSourceType.BASE64,
-                            mediaType = mediaType,
-                            data = encodedImage.base64Data
+                    content.add(
+                        AnthropicImageContent(
+                            source = ImageSource.base64(mediaType, encodedImage.base64Data)
                         )
                     )
-                )
+                }
             }
         }
 
@@ -471,16 +482,17 @@ class ChatRepositoryImpl @Inject constructor(
 
         streamPreparedApiState(
             prepare = {
+                val preparedUserMessages = prepareMessagesForPlatform(userMessages, platform)
                 val contents = mutableListOf<Content>()
 
-                userMessages.forEachIndexed { index, userMsg ->
-                    contents.add(transformMessageV2ToGoogle(userMsg, GoogleRole.USER))
+                preparedUserMessages.forEachIndexed { index, userMsg ->
+                    contents.add(transformMessageV2ToGoogle(userMsg, GoogleRole.USER, platform.uid))
 
                     if (index < assistantMessages.size) {
                         assistantMessages[index]
                             .firstOrNull { it.content.isNotBlank() && it.platformType == platform.uid }
                             ?.let { assistantMsg ->
-                                contents.add(transformMessageV2ToGoogle(assistantMsg, GoogleRole.MODEL))
+                                contents.add(transformMessageV2ToGoogle(assistantMsg, GoogleRole.MODEL, platform.uid))
                             }
                     }
                 }
@@ -536,7 +548,7 @@ class ChatRepositoryImpl @Inject constructor(
         flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
     }
 
-    private suspend fun transformMessageV2ToGoogle(message: MessageV2, role: GoogleRole): Content {
+    private suspend fun transformMessageV2ToGoogle(message: MessageV2, role: GoogleRole, platformUid: String): Content {
         val parts = mutableListOf<Part>()
         val messageContent = if (role == GoogleRole.USER) message.content else stripAssistantErrorNote(message.content)
 
@@ -546,11 +558,17 @@ class ChatRepositoryImpl @Inject constructor(
         }
 
         // Add file content (images)
-        message.files.forEach { fileUri ->
-            val mimeType = FileUtils.getMimeType(context, fileUri)
-            val encodedImage = getEncodedAttachment(fileUri, mimeType)
-            if (encodedImage != null) {
-                parts.add(Part.inlineData(encodedImage.mimeType, encodedImage.base64Data))
+        message.attachments.forEach { attachment ->
+            val providerRef = attachment.providerRefFor(platformUid)
+            if (providerRef?.remoteType == dev.chungjungsoo.gptmobile.data.model.AttachmentRemoteType.GOOGLE_FILE) {
+                parts.add(Part.fileData(providerRef.mimeType, providerRef.remoteId))
+            } else {
+                val filePath = attachment.preparedFilePath.ifBlank { attachment.localFilePath }
+                val mimeType = attachment.mimeType.ifBlank { FileUtils.getMimeType(context, filePath) }
+                val encodedImage = getEncodedAttachment(filePath, mimeType)
+                if (encodedImage != null) {
+                    parts.add(Part.inlineData(encodedImage.mimeType, encodedImage.base64Data))
+                }
             }
         }
 
@@ -566,6 +584,22 @@ class ChatRepositoryImpl @Inject constructor(
                 AttachmentPayloadCache.put(filePath, encodedImage)
             }
         }
+    }
+
+    private suspend fun prepareMessagesForPlatform(
+        messages: List<MessageV2>,
+        platform: PlatformV2
+    ): List<MessageV2> {
+        val updatedMessages = messages.map { attachmentUploadCoordinator.ensureMessageAttachmentsForPlatform(it, platform) }
+        val changedMessages = updatedMessages
+            .zip(messages)
+            .mapNotNull { (updated, original) -> updated.takeIf { it != original } }
+
+        if (changedMessages.isNotEmpty()) {
+            messageV2Dao.editMessages(*changedMessages.toTypedArray())
+        }
+
+        return updatedMessages
     }
 
     override suspend fun fetchChatList(): List<ChatRoom> = chatRoomDao.getChatRooms()
@@ -644,7 +678,7 @@ class ChatRepositoryImpl @Inject constructor(
                     id = m.id,
                     chatId = m.chatId,
                     content = m.content,
-                    files = listOf(),
+                    attachments = listOf(),
                     revisions = listOf(),
                     linkedMessageId = m.linkedMessageId,
                     platformType = m.platformType?.let { apiTypeMap[it] },
