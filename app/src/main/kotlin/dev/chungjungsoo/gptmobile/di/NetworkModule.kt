@@ -8,6 +8,8 @@ import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPIImpl
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPIImpl
+import dev.chungjungsoo.gptmobile.data.network.GroqAPI
+import dev.chungjungsoo.gptmobile.data.network.GroqAPIImpl
 import dev.chungjungsoo.gptmobile.data.network.NetworkClient
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPIImpl
@@ -25,6 +27,10 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideOpenAIAPI(networkClient: NetworkClient): OpenAIAPI = OpenAIAPIImpl(networkClient)
+
+    @Provides
+    @Singleton
+    fun provideGroqAPI(networkClient: NetworkClient): GroqAPI = GroqAPIImpl(networkClient)
 
     @Provides
     @Singleton
