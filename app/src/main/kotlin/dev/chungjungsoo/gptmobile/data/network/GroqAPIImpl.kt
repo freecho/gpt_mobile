@@ -1,5 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.network
 
+import android.util.Log
 import dev.chungjungsoo.gptmobile.data.ModelConstants
 import dev.chungjungsoo.gptmobile.data.dto.groq.request.GroqChatCompletionRequest
 import dev.chungjungsoo.gptmobile.data.dto.groq.response.GroqChatCompletionChunk
@@ -28,20 +29,15 @@ class GroqAPIImpl @Inject constructor(
     private val networkClient: NetworkClient
 ) : GroqAPI {
 
-    private var token: String? = null
-    private var apiUrl: String = ModelConstants.GROQ_API_URL
-
-    override fun setToken(token: String?) {
-        this.token = token
-    }
-
-    override fun setAPIUrl(url: String) {
-        this.apiUrl = url
-    }
-
-    override fun streamChatCompletion(request: GroqChatCompletionRequest, timeoutSeconds: Int): Flow<GroqChatCompletionChunk> = flow {
+    override fun streamChatCompletion(
+        request: GroqChatCompletionRequest,
+        timeoutSeconds: Int,
+        token: String?,
+        apiUrl: String
+    ): Flow<GroqChatCompletionChunk> = flow {
         try {
-            val endpoint = if (apiUrl.endsWith("/")) "${apiUrl}v1/chat/completions" else "$apiUrl/v1/chat/completions"
+            val resolvedApiUrl = apiUrl.ifBlank { ModelConstants.GROQ_API_URL }
+            val endpoint = if (resolvedApiUrl.endsWith("/")) "${resolvedApiUrl}v1/chat/completions" else "$resolvedApiUrl/v1/chat/completions"
 
             networkClient().preparePost(endpoint) {
                 applyPlatformStreamingTimeout(timeoutSeconds)
@@ -79,15 +75,15 @@ class GroqAPIImpl @Inject constructor(
                 val channel = response.bodyAsChannel()
                 while (!channel.isClosedForRead) {
                     val line = channel.readLine() ?: break
-                    if (!line.startsWith("data: ")) continue
+                    if (!line.startsWith("data:")) continue
 
-                    val data = line.removePrefix("data: ").trim()
+                    val data = line.removePrefix("data:").trim()
                     if (data == "[DONE]") break
 
                     try {
                         emit(NetworkClient.openAIJson.decodeFromString<GroqChatCompletionChunk>(data))
-                    } catch (_: Exception) {
-                        // Skip malformed chunks.
+                    } catch (e: Exception) {
+                        Log.w("GroqAPI", "Skipping malformed Groq chunk: $data", e)
                     }
                 }
             }

@@ -16,6 +16,7 @@ data class GroqChatCompletionRequest(
     val messages: List<ChatMessage>,
 
     @SerialName("stream")
+    @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val stream: Boolean = true,
 
     @SerialName("temperature")

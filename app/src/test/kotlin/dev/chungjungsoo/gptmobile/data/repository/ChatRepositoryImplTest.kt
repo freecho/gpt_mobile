@@ -1,11 +1,6 @@
 package dev.chungjungsoo.gptmobile.data.repository
 
 import android.content.ContextWrapper
-import dev.chungjungsoo.gptmobile.data.database.dao.ChatPlatformModelV2Dao
-import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomDao
-import dev.chungjungsoo.gptmobile.data.database.dao.ChatRoomV2Dao
-import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
-import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
 import dev.chungjungsoo.gptmobile.data.database.entity.MessageV2
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
@@ -60,7 +55,6 @@ class ChatRepositoryImplTest {
 
     @Test
     fun `loading is emitted before expensive request preparation finishes`() = runBlocking {
-        val startedAt = System.currentTimeMillis()
         val firstState = withTimeout(100) {
             streamPreparedApiState(
                 prepare = {
@@ -71,10 +65,8 @@ class ChatRepositoryImplTest {
                 }
             ).first()
         }
-        val elapsedMillis = System.currentTimeMillis() - startedAt
 
         assertEquals(ApiState.Loading, firstState)
-        assertTrue(elapsedMillis < 150)
     }
 
     @Test
@@ -153,7 +145,7 @@ class ChatRepositoryImplTest {
     }
 
     @Test
-    fun `groq reasoning disabled omits reasoning request settings`() = runBlocking {
+    fun `groq reasoning disabled hides qwen reasoning`() = runBlocking {
         val groqAPI = FakeGroqAPI(emptyFlow())
         val repository = createRepository(groqAPI = groqAPI)
 
@@ -164,8 +156,25 @@ class ChatRepositoryImplTest {
         ).toList()
 
         val request = groqAPI.lastRequest
-        assertNull(request?.reasoningFormat)
+        assertEquals("hidden", request?.reasoningFormat)
         assertNull(request?.includeReasoning)
+        assertNull(request?.reasoningEffort)
+    }
+
+    @Test
+    fun `groq reasoning disabled turns off gpt oss reasoning`() = runBlocking {
+        val groqAPI = FakeGroqAPI(emptyFlow())
+        val repository = createRepository(groqAPI = groqAPI)
+
+        repository.completeChat(
+            userMessages = listOf(MessageV2(content = "Hi", platformType = null)),
+            assistantMessages = emptyList(),
+            platform = groqPlatform(reasoning = false, model = "openai/gpt-oss-20b")
+        ).toList()
+
+        val request = groqAPI.lastRequest
+        assertNull(request?.reasoningFormat)
+        assertEquals(false, request?.includeReasoning)
         assertNull(request?.reasoningEffort)
     }
 
@@ -227,13 +236,11 @@ class ChatRepositoryImplTest {
         var streamCalls = 0
         var lastRequest: GroqChatCompletionRequest? = null
 
-        override fun setToken(token: String?) = Unit
-
-        override fun setAPIUrl(url: String) = Unit
-
         override fun streamChatCompletion(
             request: GroqChatCompletionRequest,
-            timeoutSeconds: Int
+            timeoutSeconds: Int,
+            token: String?,
+            apiUrl: String
         ): Flow<GroqChatCompletionChunk> {
             streamCalls += 1
             lastRequest = request

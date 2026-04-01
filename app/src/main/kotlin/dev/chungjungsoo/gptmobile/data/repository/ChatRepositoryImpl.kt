@@ -219,9 +219,6 @@ class ChatRepositoryImpl @Inject constructor(
         assistantMessages: List<List<MessageV2>>,
         platform: PlatformV2
     ): Flow<ApiState> = try {
-        groqAPI.setToken(platform.token)
-        groqAPI.setAPIUrl(platform.apiUrl)
-
         streamPreparedApiState(
             prepare = {
                 attachmentUploadCoordinator.validateInlineAttachmentBudget(userMessages + assistantMessages.flatten())
@@ -253,7 +250,12 @@ class ChatRepositoryImpl @Inject constructor(
             stream = { request ->
                 flow {
                     val parser = GroqReasoningParser()
-                    groqAPI.streamChatCompletion(request, platform.timeout).collect { chunk ->
+                    groqAPI.streamChatCompletion(
+                        request = request,
+                        timeoutSeconds = platform.timeout,
+                        token = platform.token,
+                        apiUrl = platform.apiUrl
+                    ).collect { chunk ->
                         when {
                             chunk.error != null -> emit(ApiState.Error(chunk.error.message))
 
@@ -877,7 +879,7 @@ internal fun createGroqChatCompletionRequest(
     messages: List<ChatMessage>,
     platform: PlatformV2
 ): GroqChatCompletionRequest {
-    val usesGptOssReasoning = platform.reasoning && isGroqGptOssModel(platform.model)
+    val isGptOssModel = isGroqGptOssModel(platform.model)
 
     return GroqChatCompletionRequest(
         model = platform.model,
@@ -885,9 +887,17 @@ internal fun createGroqChatCompletionRequest(
         stream = platform.stream,
         temperature = platform.temperature,
         topP = platform.topP,
-        reasoningEffort = if (usesGptOssReasoning) "medium" else null,
-        reasoningFormat = if (platform.reasoning && !usesGptOssReasoning) "parsed" else null,
-        includeReasoning = if (usesGptOssReasoning) true else null
+        reasoningEffort = if (platform.reasoning && isGptOssModel) "medium" else null,
+        reasoningFormat = when {
+            platform.reasoning && !isGptOssModel -> "parsed"
+            !platform.reasoning && !isGptOssModel -> "hidden"
+            else -> null
+        },
+        includeReasoning = when {
+            platform.reasoning && isGptOssModel -> true
+            !platform.reasoning && isGptOssModel -> false
+            else -> null
+        }
     )
 }
 

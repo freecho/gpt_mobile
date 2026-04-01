@@ -53,6 +53,8 @@ internal class GroqReasoningParser {
     private fun drain(finalFlush: Boolean): List<ApiState> {
         val emitted = mutableListOf<ApiState>()
 
+        // Intentional state-machine loop: continue after consuming a full tag,
+        // break only when we need more data or the final flush has no more tags.
         while (pendingContent.isNotEmpty()) {
             if (insideThinkBlock) {
                 val closingIndex = pendingContent.indexOf(GROQ_THINK_CLOSE)
