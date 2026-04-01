@@ -3,7 +3,6 @@ package dev.chungjungsoo.gptmobile.data.dto
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ImageSource
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Part
 import dev.chungjungsoo.gptmobile.data.dto.openai.request.ResponseContentPart
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
