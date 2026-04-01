@@ -13,6 +13,7 @@ import dev.chungjungsoo.gptmobile.data.database.dao.MessageDao
 import dev.chungjungsoo.gptmobile.data.database.dao.MessageV2Dao
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
+import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.ChatRepositoryImpl
@@ -34,6 +35,7 @@ object ChatRepositoryModule {
         chatPlatformModelV2Dao: ChatPlatformModelV2Dao,
         settingRepository: SettingRepository,
         openAIAPI: OpenAIAPI,
+        groqAPI: GroqAPI,
         anthropicAPI: AnthropicAPI,
         googleAPI: GoogleAPI,
         attachmentUploadCoordinator: dev.chungjungsoo.gptmobile.data.repository.AttachmentUploadCoordinator
@@ -46,6 +48,7 @@ object ChatRepositoryModule {
         chatPlatformModelV2Dao,
         settingRepository,
         openAIAPI,
+        groqAPI,
         anthropicAPI,
         googleAPI,
         attachmentUploadCoordinator

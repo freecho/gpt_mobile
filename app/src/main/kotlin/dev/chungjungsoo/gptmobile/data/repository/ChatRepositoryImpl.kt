@@ -16,7 +16,6 @@ import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
 import dev.chungjungsoo.gptmobile.data.dto.ApiState
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ImageContent as AnthropicImageContent
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ImageSource
-import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ImageSourceType
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.MediaType
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.MessageContent as AnthropicMessageContent
 import dev.chungjungsoo.gptmobile.data.dto.anthropic.common.MessageRole
@@ -28,6 +27,7 @@ import dev.chungjungsoo.gptmobile.data.dto.google.common.Part
 import dev.chungjungsoo.gptmobile.data.dto.google.common.Role as GoogleRole
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GenerateContentRequest
 import dev.chungjungsoo.gptmobile.data.dto.google.request.GenerationConfig
+import dev.chungjungsoo.gptmobile.data.dto.groq.request.GroqChatCompletionRequest
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.ImageContent as OpenAIImageContent
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.ImageUrl
 import dev.chungjungsoo.gptmobile.data.dto.openai.common.MessageContent as OpenAIMessageContent
@@ -48,6 +48,7 @@ import dev.chungjungsoo.gptmobile.data.model.ApiType
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.network.AnthropicAPI
 import dev.chungjungsoo.gptmobile.data.network.GoogleAPI
+import dev.chungjungsoo.gptmobile.data.network.GroqAPI
 import dev.chungjungsoo.gptmobile.data.network.OpenAIAPI
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
@@ -71,6 +72,7 @@ class ChatRepositoryImpl @Inject constructor(
     private val chatPlatformModelV2Dao: ChatPlatformModelV2Dao,
     private val settingRepository: SettingRepository,
     private val openAIAPI: OpenAIAPI,
+    private val groqAPI: GroqAPI,
     private val anthropicAPI: AnthropicAPI,
     private val googleAPI: GoogleAPI,
     private val attachmentUploadCoordinator: AttachmentUploadCoordinator
@@ -122,7 +124,11 @@ class ChatRepositoryImpl @Inject constructor(
             completeChatWithOpenAIResponses(userMessages, assistantMessages, platform)
         }
 
-        ClientType.GROQ, ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
+        ClientType.GROQ -> {
+            completeChatWithGroq(userMessages, assistantMessages, platform)
+        }
+
+        ClientType.OLLAMA, ClientType.OPENROUTER, ClientType.CUSTOM -> {
             // Use Chat Completions API for OpenAI-compatible services
             completeChatWithOpenAIChatCompletions(userMessages, assistantMessages, platform)
         }
@@ -196,6 +202,73 @@ class ChatRepositoryImpl @Inject constructor(
                             else -> {}
                         }
                     }
+                }
+            }
+        ).catch { e ->
+            emit(ApiState.Error(e.message ?: "Unknown error"))
+        }.onCompletion {
+            emit(ApiState.Done)
+        }
+    } catch (e: Exception) {
+        flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
+    }
+
+    private suspend fun completeChatWithGroq(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2
+    ): Flow<ApiState> = try {
+        streamPreparedApiState(
+            prepare = {
+                attachmentUploadCoordinator.validateInlineAttachmentBudget(userMessages + assistantMessages.flatten())
+                val messages = mutableListOf<ChatMessage>()
+
+                platform.systemPrompt?.takeIf { it.isNotBlank() }?.let { systemPrompt ->
+                    messages.add(
+                        ChatMessage(
+                            role = OpenAIRole.SYSTEM,
+                            content = listOf(OpenAITextContent(text = systemPrompt))
+                        )
+                    )
+                }
+
+                userMessages.forEachIndexed { index, userMsg ->
+                    messages.add(transformMessageV2ToChatMessage(userMsg, isUser = true))
+
+                    if (index < assistantMessages.size) {
+                        assistantMessages[index]
+                            .firstOrNull { it.content.isNotBlank() && it.platformType == platform.uid }
+                            ?.let { assistantMsg ->
+                                messages.add(transformMessageV2ToChatMessage(assistantMsg, isUser = false))
+                            }
+                    }
+                }
+
+                createGroqChatCompletionRequest(messages, platform)
+            },
+            stream = { request ->
+                flow {
+                    val parser = GroqReasoningParser()
+                    groqAPI.streamChatCompletion(
+                        request = request,
+                        timeoutSeconds = platform.timeout,
+                        token = platform.token,
+                        apiUrl = platform.apiUrl
+                    ).collect { chunk ->
+                        when {
+                            chunk.error != null -> emit(ApiState.Error(chunk.error.message))
+
+                            else -> {
+                                val choice = chunk.choices?.firstOrNull()
+                                parser.append(
+                                    reasoningChunk = choice?.delta?.reasoning ?: choice?.message?.reasoning,
+                                    contentChunk = choice?.delta?.content ?: choice?.message?.content
+                                ).forEach { emit(it) }
+                            }
+                        }
+                    }
+
+                    parser.flush().forEach { emit(it) }
                 }
             }
         ).catch { e ->
@@ -800,6 +873,34 @@ class ChatRepositoryImpl @Inject constructor(
         chatRoomV2Dao.deleteChatRooms(*chatRooms.toTypedArray())
     }
 }
+
+internal fun createGroqChatCompletionRequest(
+    messages: List<ChatMessage>,
+    platform: PlatformV2
+): GroqChatCompletionRequest {
+    val isGptOssModel = isGroqGptOssModel(platform.model)
+
+    return GroqChatCompletionRequest(
+        model = platform.model,
+        messages = messages,
+        stream = platform.stream,
+        temperature = platform.temperature,
+        topP = platform.topP,
+        reasoningEffort = if (platform.reasoning && isGptOssModel) "medium" else null,
+        reasoningFormat = when {
+            platform.reasoning && !isGptOssModel -> "parsed"
+            !platform.reasoning && !isGptOssModel -> "hidden"
+            else -> null
+        },
+        includeReasoning = when {
+            platform.reasoning && isGptOssModel -> true
+            !platform.reasoning && isGptOssModel -> false
+            else -> null
+        }
+    )
+}
+
+internal fun isGroqGptOssModel(model: String): Boolean = model.contains("gpt-oss", ignoreCase = true)
 
 internal fun validateResponseInputPartsOrThrow(messageContent: String, partCount: Int, messageId: Int) {
     if (messageContent.isBlank() && partCount == 0) {
