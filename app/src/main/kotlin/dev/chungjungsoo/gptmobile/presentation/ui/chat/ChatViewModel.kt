@@ -412,12 +412,12 @@ class ChatViewModel @Inject constructor(
             val isAnthropic = platform.compatibleType == dev.chungjungsoo.gptmobile.data.model.ClientType.ANTHROPIC
 
             viewModelScope.launch {
-                val flow = if (isAnthropic && platform.webSearch) {
+                val flow = if (isAnthropic && _enabledTools.value.isNotEmpty()) {
                     chatRepository.completeChatWithTools(
                         _groupedMessages.value.userMessages,
                         _groupedMessages.value.assistantMessages,
                         platformWithChatModel,
-                        setOf("web_search_20250305")
+                        _enabledTools.value
                     )
                 } else {
                     chatRepository.completeChat(
