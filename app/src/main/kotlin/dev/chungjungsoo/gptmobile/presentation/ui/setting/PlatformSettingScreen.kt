@@ -4,6 +4,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +19,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Label
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -36,6 +38,7 @@ import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -51,6 +54,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.chungjungsoo.gptmobile.R
+import dev.chungjungsoo.gptmobile.data.ModelConstants
 import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.presentation.common.SettingItem
 import dev.chungjungsoo.gptmobile.util.formatPlatformTimeout
@@ -226,11 +230,33 @@ fun PlatformSettingScreen(
                         )
                     }
                 )
+                // 判断是否是自定义提供商（CUSTOM 类型，或自定义 URL 的 Anthropic 类型）
+                val isCustomProvider = platformData.compatibleType == ClientType.CUSTOM ||
+                    (platformData.compatibleType == ClientType.ANTHROPIC &&
+                        platformData.apiUrl != ModelConstants.ANTHROPIC_API_URL)
+                val isAnthropicCompatible = platformData.compatibleType == ClientType.ANTHROPIC
+
+                if (isCustomProvider) {
+                    ProtocolSelector(
+                        modifier = Modifier.height(64.dp),
+                        enabled = platformData.enabled,
+                        isAnthropicSelected = isAnthropicCompatible,
+                        onSelectOpenAI = { settingViewModel.updateProtocol(ClientType.CUSTOM) },
+                        onSelectAnthropic = { settingViewModel.updateProtocol(ClientType.ANTHROPIC) }
+                    )
+                }
                 ExtendedThinkingSwitch(
                     modifier = Modifier.height(64.dp),
                     enabled = platformData.enabled,
                     isChecked = platformData.reasoning,
                     onCheckedChange = { settingViewModel.toggleReasoning() }
+                )
+                WebSearchSwitch(
+                    modifier = Modifier.height(64.dp),
+                    enabled = platformData.enabled,
+                    isChecked = platformData.webSearch,
+                    isSupported = isAnthropicCompatible,
+                    onCheckedChange = { settingViewModel.toggleWebSearch() }
                 )
 
                 PlatformNameDialog(dialogState, platformData.name, settingViewModel)
@@ -425,5 +451,158 @@ fun PreferenceSwitchWithContainer(
             modifier = Modifier.padding(start = 12.dp, end = 6.dp),
             thumbContent = thumbContent
         )
+    }
+}
+
+@Composable
+fun WebSearchSwitch(
+    modifier: Modifier,
+    enabled: Boolean,
+    isChecked: Boolean,
+    isSupported: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    var showUnsupportedDialog by remember { mutableStateOf(false) }
+
+    val clickableModifier = if (enabled) {
+        modifier
+            .fillMaxWidth()
+            .clickable(
+                onClick = {
+                    if (isSupported) {
+                        onCheckedChange(!isChecked)
+                    } else {
+                        showUnsupportedDialog = true
+                    }
+                }
+            )
+            .padding(horizontal = 8.dp)
+    } else {
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp)
+    }
+    val colors = ListItemDefaults.colors()
+
+    ListItem(
+        modifier = clickableModifier,
+        headlineContent = {
+            Text(
+                text = stringResource(R.string.web_search),
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        supportingContent = {
+            Text(
+                text = stringResource(R.string.web_search_description),
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        leadingContent = {
+            Icon(
+                imageVector = ImageVector.vectorResource(id = R.drawable.ic_tools),
+                contentDescription = stringResource(R.string.web_search)
+            )
+        },
+        trailingContent = {
+            Switch(
+                checked = isChecked && isSupported,
+                onCheckedChange = null,
+                enabled = enabled && isSupported
+            )
+        },
+        colors = ListItemDefaults.colors(
+            headlineColor = if (enabled) colors.headlineColor else colors.disabledHeadlineColor,
+            supportingColor = if (enabled) colors.supportingTextColor else colors.disabledHeadlineColor,
+            leadingIconColor = if (enabled) colors.leadingIconColor else colors.disabledLeadingIconColor,
+            trailingIconColor = if (enabled) colors.trailingIconColor else colors.disabledTrailingIconColor
+        )
+    )
+
+    if (showUnsupportedDialog) {
+        AlertDialog(
+            onDismissRequest = { showUnsupportedDialog = false },
+            title = { Text(stringResource(R.string.web_search_not_supported)) },
+            text = { Text(stringResource(R.string.web_search_not_supported_description)) },
+            confirmButton = {
+                TextButton(onClick = { showUnsupportedDialog = false }) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            }
+        )
+    }
+}
+
+@Composable
+fun ProtocolSelector(
+    modifier: Modifier,
+    enabled: Boolean,
+    isAnthropicSelected: Boolean,
+    onSelectOpenAI: () -> Unit,
+    onSelectAnthropic: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val colors = ListItemDefaults.colors()
+    val selectedLabel = if (isAnthropicSelected) {
+        stringResource(R.string.api_protocol_anthropic)
+    } else {
+        stringResource(R.string.api_protocol_openai)
+    }
+
+    Box {
+        ListItem(
+            modifier = modifier
+                .fillMaxWidth()
+                .then(
+                    if (enabled) {
+                        Modifier.clickable { expanded = true }.padding(horizontal = 8.dp)
+                    } else {
+                        Modifier.padding(horizontal = 8.dp)
+                    }
+                ),
+            headlineContent = {
+                Text(
+                    text = stringResource(R.string.api_protocol),
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            supportingContent = {
+                Text(
+                    text = selectedLabel,
+                    overflow = TextOverflow.Ellipsis
+                )
+            },
+            leadingContent = {
+                Icon(
+                    imageVector = ImageVector.vectorResource(id = R.drawable.ic_link),
+                    contentDescription = stringResource(R.string.api_protocol_icon)
+                )
+            },
+            colors = ListItemDefaults.colors(
+                headlineColor = if (enabled) colors.headlineColor else colors.disabledHeadlineColor,
+                supportingColor = if (enabled) colors.supportingTextColor else colors.disabledHeadlineColor,
+                leadingIconColor = if (enabled) colors.leadingIconColor else colors.disabledLeadingIconColor
+            )
+        )
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.api_protocol_openai)) },
+                onClick = { onSelectOpenAI(); expanded = false },
+                trailingIcon = if (!isAnthropicSelected) {
+                    { Icon(Icons.Outlined.Check, contentDescription = null) }
+                } else null
+            )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.api_protocol_anthropic)) },
+                onClick = { onSelectAnthropic(); expanded = false },
+                trailingIcon = if (isAnthropicSelected) {
+                    { Icon(Icons.Outlined.Check, contentDescription = null) }
+                } else null
+            )
+        }
     }
 }

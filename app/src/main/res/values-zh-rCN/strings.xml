@@ -202,6 +202,14 @@
     <string name="collapse">收起</string>
     <string name="extended_thinking">深度推理</string>
     <string name="extended_thinking_description">支持深度推理的模型（例如 o1、o3, Claude 思考模式、Gemini 思考模式）</string>
+    <string name="web_search">联网搜索</string>
+    <string name="web_search_description">启用 Anthropic 内置联网工具（仅限 Anthropic 平台）</string>
+    <string name="web_search_not_supported">不支持联网搜索</string>
+    <string name="web_search_not_supported_description">联网搜索目前仅支持 Anthropic 平台，请切换至 Anthropic 平台后开启此功能。</string>
+    <string name="api_protocol">API 协议</string>
+    <string name="api_protocol_openai">OpenAI 兼容</string>
+    <string name="api_protocol_anthropic">Anthropic 兼容</string>
+    <string name="api_protocol_icon">API 协议图标</string>
     <string name="your_platforms">你的提供商</string>
     <string name="no_platforms_yet">尚未添加任何提供商</string>
     <string name="add_your_first_platform">开始前，请先添加一个提供商</string>

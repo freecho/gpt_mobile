@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.chungjungsoo.gptmobile.data.database.entity.PlatformV2
+import dev.chungjungsoo.gptmobile.data.model.ClientType
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -51,6 +52,20 @@ class PlatformSettingViewModel @Inject constructor(
     fun toggleReasoning() {
         _platformState.value?.let { platform ->
             updatePlatform(platform.copy(reasoning = !platform.reasoning))
+        }
+    }
+
+    fun toggleWebSearch() {
+        _platformState.value?.let { platform ->
+            updatePlatform(platform.copy(webSearch = !platform.webSearch))
+        }
+    }
+
+    fun updateProtocol(protocol: ClientType) {
+        _platformState.value?.let { platform ->
+            // When switching away from Anthropic protocol, also disable web search
+            val disableWebSearch = protocol != ClientType.ANTHROPIC && platform.webSearch
+            updatePlatform(platform.copy(compatibleType = protocol, webSearch = if (disableWebSearch) false else platform.webSearch))
         }
     }
 

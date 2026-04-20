@@ -49,5 +49,8 @@ data class PlatformV2(
     val reasoning: Boolean = false,
 
     @ColumnInfo(name = "timeout")
-    val timeout: Int = 30
+    val timeout: Int = 30,
+
+    @ColumnInfo(name = "web_search")
+    val webSearch: Boolean = false
 )

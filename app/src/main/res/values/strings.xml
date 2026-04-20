@@ -256,6 +256,14 @@
     <string name="collapse">Collapse</string>
     <string name="extended_thinking">Extended Thinking</string>
     <string name="extended_thinking_description">Enable for reasoning models (o1, o3, Claude with thinking, Gemini thinking)</string>
+    <string name="web_search">Web Search</string>
+    <string name="web_search_description">Enable web search via Anthropic built-in tool (Anthropic only)</string>
+    <string name="web_search_not_supported">Web Search Not Supported</string>
+    <string name="web_search_not_supported_description">Web search is currently only supported for Anthropic platforms. Switch to an Anthropic platform to enable this feature.</string>
+    <string name="api_protocol">API Protocol</string>
+    <string name="api_protocol_openai">OpenAI Compatible</string>
+    <string name="api_protocol_anthropic">Anthropic Compatible</string>
+    <string name="api_protocol_icon">API protocol icon</string>
 
     <!-- Setup Wizard Strings -->
     <string name="your_platforms">Your Platforms</string>

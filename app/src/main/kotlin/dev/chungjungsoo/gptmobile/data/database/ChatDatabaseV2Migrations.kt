@@ -149,4 +149,12 @@ object ChatDatabaseV2Migrations {
             )
         }
     }
+
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE `platform_v2` ADD COLUMN `web_search` INTEGER NOT NULL DEFAULT 0"
+            )
+        }
+    }
 }
