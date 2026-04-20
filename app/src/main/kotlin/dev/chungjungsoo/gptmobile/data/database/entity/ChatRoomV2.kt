@@ -28,7 +28,15 @@ data class ChatRoomV2(
     val createdAt: Long = System.currentTimeMillis() / 1000,
 
     @ColumnInfo(name = "updated_at")
-    val updatedAt: Long = System.currentTimeMillis() / 1000
+    val updatedAt: Long = System.currentTimeMillis() / 1000,
+
+    /**
+     * Comma-separated list of enabled tool IDs for this chat room.
+     * Example: "web_search" or "" (empty = no tools).
+     * Only applies to Anthropic/Claude platforms.
+     */
+    @ColumnInfo(name = "enabled_tools", defaultValue = "")
+    val enabledTools: String = ""
 ) : Parcelable
 
 class StringListConverter {

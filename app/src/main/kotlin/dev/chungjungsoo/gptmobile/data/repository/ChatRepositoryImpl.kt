@@ -62,6 +62,11 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.onCompletion
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 
 class ChatRepositoryImpl @Inject constructor(
     @param:ApplicationContext private val context: Context,
@@ -506,6 +511,212 @@ class ChatRepositoryImpl @Inject constructor(
         flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
     }
 
+    override suspend fun completeChatWithTools(
+        userMessages: List<MessageV2>,
+        assistantMessages: List<List<MessageV2>>,
+        platform: PlatformV2,
+        enabledTools: Set<String>
+    ): Flow<ApiState> = try {
+        anthropicAPI.setToken(platform.token)
+        anthropicAPI.setAPIUrl(platform.apiUrl)
+
+        flow {
+            val preparedUserMessages = prepareMessagesForPlatform(userMessages, platform)
+            val messages = mutableListOf<InputMessage>()
+
+            preparedUserMessages.forEachIndexed { index, userMsg ->
+                messages.add(transformMessageV2ToAnthropic(userMsg, MessageRole.USER, platform.uid))
+                if (index < assistantMessages.size) {
+                    assistantMessages[index]
+                        .firstOrNull { it.content.isNotBlank() && it.platformType == platform.uid }
+                        ?.let { assistantMsg ->
+                            messages.add(transformMessageV2ToAnthropic(assistantMsg, MessageRole.ASSISTANT, platform.uid))
+                        }
+                }
+            }
+
+            val tools: List<JsonElement> =
+                enabledTools.mapNotNull { toolId ->
+                    when (toolId) {
+                        "web_search" -> buildJsonObject {
+                            put("type", "web_search_20260209")
+                            put("name", "web_search")
+                        }
+                        else -> null
+                    }
+                }
+
+            // Agentic loop: keep going until stop_reason != tool_use
+            var loopMessages = messages.toMutableList()
+            var iterationCount = 0
+            val maxIterations = 10
+
+            while (iterationCount < maxIterations) {
+                iterationCount++
+
+                val request = MessageRequest(
+                    model = platform.model,
+                    messages = loopMessages,
+                    maxTokens = if (platform.reasoning) 16000 else 4096,
+                    stream = platform.stream,
+                    systemPrompt = platform.systemPrompt,
+                    temperature = if (platform.reasoning) null else platform.temperature,
+                    topP = if (platform.reasoning) null else platform.topP,
+                    thinking = if (platform.reasoning) {
+                        dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ThinkingConfig(
+                            type = "enabled",
+                            budgetTokens = 10000
+                        )
+                    } else null,
+                    tools = tools.ifEmpty { null },
+                    toolChoice = if (tools.isNotEmpty()) {
+                        dev.chungjungsoo.gptmobile.data.dto.anthropic.request.ToolChoice(type = "auto")
+                    } else null
+                )
+
+                // Collect this turn's streamed chunks
+                var stopReason: dev.chungjungsoo.gptmobile.data.dto.anthropic.response.StopReason? = null
+                val assistantContentBlocks = mutableListOf<AnthropicMessageContent>()
+                // For accumulating streaming tool_use blocks: index -> (id, name, partial_json_buffer)
+                val toolUseBuilders = mutableMapOf<Int, Triple<String, String, StringBuilder>>()
+                // For accumulating thinking blocks: index -> (thinking_text, signature)
+                val thinkingBuilders = mutableMapOf<Int, Pair<StringBuilder, StringBuilder>>()
+                var currentTextBuilder = StringBuilder()
+                var hadError = false
+
+                anthropicAPI.streamChatMessage(request, platform.timeout).collect { chunk ->
+                    when (chunk) {
+                        is dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentStartResponseChunk -> {
+                            val block = chunk.contentBlock
+                            when (block.type) {
+                                dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.THINKING -> {
+                                    thinkingBuilders[chunk.index] = Pair(StringBuilder(), StringBuilder())
+                                }
+                                dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.TOOL_USE -> {
+                                    // Save current text if any
+                                    if (currentTextBuilder.isNotEmpty()) {
+                                        assistantContentBlocks.add(AnthropicTextContent(text = currentTextBuilder.toString()))
+                                        currentTextBuilder = StringBuilder()
+                                    }
+                                    toolUseBuilders[chunk.index] = Triple(
+                                        block.id ?: "",
+                                        block.name ?: "",
+                                        StringBuilder()
+                                    )
+                                    emit(ApiState.ToolUsing(block.name ?: "tool"))
+                                }
+                                else -> {}
+                            }
+                        }
+
+                        is dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentDeltaResponseChunk -> {
+                            when (chunk.delta.type) {
+                                dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.THINKING_DELTA -> {
+                                    chunk.delta.thinking?.let { t ->
+                                        thinkingBuilders[chunk.index]?.first?.append(t)
+                                        emit(ApiState.Thinking(t))
+                                    }
+                                }
+                                dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.SIGNATURE_DELTA -> {
+                                    // Accumulate signature for thinking block
+                                    chunk.delta.signature?.let { sig ->
+                                        thinkingBuilders[chunk.index]?.second?.append(sig)
+                                    }
+                                }
+                                dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.DELTA -> {
+                                    chunk.delta.text?.let {
+                                        currentTextBuilder.append(it)
+                                        emit(ApiState.Success(it))
+                                    }
+                                }
+                                dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.INPUT_JSON_DELTA -> {
+                                    chunk.delta.partialJson?.let { partial ->
+                                        toolUseBuilders[chunk.index]?.third?.append(partial)
+                                    }
+                                }
+                                else -> {}
+                            }
+                        }
+
+                        is dev.chungjungsoo.gptmobile.data.dto.anthropic.response.MessageDeltaResponseChunk -> {
+                            stopReason = chunk.delta.stopReason
+                        }
+
+                        is dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ErrorResponseChunk -> {
+                            emit(ApiState.Error(chunk.error.message))
+                            hadError = true
+                        }
+
+                        else -> {}
+                    }
+                }
+
+                if (hadError) break
+
+                // Flush thinking blocks first (must precede text in assistant message)
+                thinkingBuilders.entries.sortedBy { it.key }.forEach { (_, pair) ->
+                    val thinkingText = pair.first.toString()
+                    val signature = pair.second.toString().ifEmpty { null }
+                    if (thinkingText.isNotEmpty()) {
+                        assistantContentBlocks.add(
+                            dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ThinkingContent(
+                                thinking = thinkingText,
+                                signature = signature
+                            )
+                        )
+                    }
+                }
+
+                // Flush remaining text
+                if (currentTextBuilder.isNotEmpty()) {
+                    assistantContentBlocks.add(AnthropicTextContent(text = currentTextBuilder.toString()))
+                }
+
+                // Build tool_use content blocks for assistant message
+                toolUseBuilders.values.forEach { (id, name, jsonBuf) ->
+                    val inputJson = try {
+                        Json.parseToJsonElement(jsonBuf.toString()).jsonObject
+                    } catch (_: Exception) {
+                        buildJsonObject { }
+                    }
+                    assistantContentBlocks.add(
+                        dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ToolUseContent(
+                            id = id,
+                            name = name,
+                            input = inputJson
+                        )
+                    )
+                }
+
+                if (stopReason != dev.chungjungsoo.gptmobile.data.dto.anthropic.response.StopReason.TOOL_USE ||
+                    toolUseBuilders.isEmpty()
+                ) {
+                    // Done — no more tool calls
+                    break
+                }
+
+                // Append assistant turn (with tool_use blocks)
+                loopMessages.add(InputMessage(role = MessageRole.ASSISTANT, content = assistantContentBlocks))
+
+                // Build tool_result user turn: for web_search we return empty string
+                // (the model already received the search results server-side via streaming)
+                val toolResults = toolUseBuilders.values.map { (id, _, _) ->
+                    dev.chungjungsoo.gptmobile.data.dto.anthropic.common.ToolResultContent(
+                        toolUseId = id,
+                        content = ""
+                    )
+                }
+                loopMessages.add(InputMessage(role = MessageRole.USER, content = toolResults))
+            }
+        }.catch { e ->
+            emit(ApiState.Error(e.message ?: "Unknown error"))
+        }.onCompletion {
+            emit(ApiState.Done)
+        }
+    } catch (e: Exception) {
+        flowOf(ApiState.Error(e.message ?: "Failed to complete chat"))
+    }
+
     private suspend fun transformMessageV2ToAnthropic(message: MessageV2, role: MessageRole, platformUid: String): InputMessage {
         val content = mutableListOf<AnthropicMessageContent>()
         val messageContent = if (role == MessageRole.USER) message.content else stripAssistantErrorNote(message.content)
@@ -790,6 +1001,11 @@ class ChatRepositoryImpl @Inject constructor(
 
     override suspend fun updateChatTitle(chatRoom: ChatRoomV2, title: String) {
         chatRoomV2Dao.editChatRoom(chatRoom.copy(title = title.replace('\n', ' ').take(50)))
+    }
+
+    override suspend fun updateChatEnabledTools(chatRoom: ChatRoomV2, enabledTools: Set<String>) {
+        val toolsString = enabledTools.filter { it.isNotBlank() }.joinToString(",")
+        chatRoomV2Dao.editChatRoom(chatRoom.copy(enabledTools = toolsString))
     }
 
     override suspend fun saveChat(chatRoom: ChatRoomV2, messages: List<MessageV2>, chatPlatformModels: Map<String, String>): ChatRoomV2 {

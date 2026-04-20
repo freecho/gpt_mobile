@@ -120,15 +120,18 @@ fun ChatScreen(
     val isChatModelDialogOpen by chatViewModel.isChatModelDialogOpen.collectAsStateWithLifecycle()
     val isEditQuestionDialogOpen by chatViewModel.isEditQuestionDialogOpen.collectAsStateWithLifecycle()
     val isSelectTextSheetOpen by chatViewModel.isSelectTextSheetOpen.collectAsStateWithLifecycle()
+    val isToolsSheetOpen by chatViewModel.isToolsSheetOpen.collectAsStateWithLifecycle()
     val isLoaded by chatViewModel.isLoaded.collectAsStateWithLifecycle()
     val selectedAttachments by chatViewModel.selectedAttachments.collectAsStateWithLifecycle()
     val attachmentNotice by chatViewModel.attachmentNotice.collectAsStateWithLifecycle()
     val appEnabledPlatforms by chatViewModel.enabledPlatformsInApp.collectAsStateWithLifecycle()
     val appAllPlatforms by chatViewModel.platformsInApp.collectAsStateWithLifecycle()
     val chatPlatformModels by chatViewModel.chatPlatformModels.collectAsStateWithLifecycle()
+    val enabledTools by chatViewModel.enabledTools.collectAsStateWithLifecycle()
     val enabledPlatformLookup = remember(appEnabledPlatforms) { appEnabledPlatforms.associateBy { it.uid } }
     val canUseChat = (chatViewModel.enabledPlatformsInChat.toSet() - appEnabledPlatforms.map { it.uid }.toSet()).isEmpty()
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
+    val showToolsButton = remember(appEnabledPlatforms) { chatViewModel.hasAnthropicPlatform() }
     val context = LocalContext.current
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
 
@@ -281,6 +284,9 @@ fun ChatScreen(
                 chatEnabled = canUseChat,
                 sendButtonEnabled = isIdle,
                 selectedAttachments = selectedAttachments,
+                enabledTools = enabledTools,
+                showToolsButton = showToolsButton,
+                onToolsClick = chatViewModel::openToolsSheet,
                 onFileSelected = { filePath -> chatViewModel.addSelectedFile(filePath) },
                 onFileRemoved = { filePath -> chatViewModel.removeSelectedFile(filePath) }
             ) {
@@ -338,6 +344,14 @@ fun ChatScreen(
                     Text(selectedText)
                 }
             }
+        }
+
+        if (isToolsSheetOpen) {
+            AnthropicToolsSheet(
+                enabledTools = enabledTools,
+                onDismissRequest = chatViewModel::closeToolsSheet,
+                onToggleTool = chatViewModel::toggleTool
+            )
         }
     }
 }
@@ -607,6 +621,9 @@ fun ChatInputBox(
     chatEnabled: Boolean = true,
     sendButtonEnabled: Boolean = true,
     selectedAttachments: List<ChatAttachmentDraft> = emptyList(),
+    enabledTools: Set<String> = emptySet(),
+    showToolsButton: Boolean = false,
+    onToolsClick: () -> Unit = {},
     onFileSelected: (String) -> Unit = {},
     onFileRemoved: (String) -> Unit = {},
     onSendButtonClick: () -> Unit = {}
@@ -661,6 +678,23 @@ fun ChatInputBox(
                             imageVector = ImageVector.vectorResource(R.drawable.ic_attach_file),
                             contentDescription = stringResource(R.string.attach_file)
                         )
+                    }
+                    if (showToolsButton) {
+                        val toolsActive = enabledTools.isNotEmpty()
+                        IconButton(
+                            enabled = chatEnabled,
+                            onClick = onToolsClick
+                        ) {
+                            Icon(
+                                imageVector = ImageVector.vectorResource(R.drawable.ic_tools),
+                                contentDescription = stringResource(R.string.tools),
+                                tint = if (toolsActive) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    androidx.compose.ui.graphics.Color.Unspecified
+                                }
+                            )
+                        }
                     }
                     Box(
                         modifier = Modifier

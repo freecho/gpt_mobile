@@ -141,4 +141,12 @@ object ChatDatabaseV2Migrations {
 
         return ChatAttachmentListConverter().fromList(attachments)
     }
+
+    val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE `chats_v2` ADD COLUMN `enabled_tools` TEXT NOT NULL DEFAULT ''"
+            )
+        }
+    }
 }

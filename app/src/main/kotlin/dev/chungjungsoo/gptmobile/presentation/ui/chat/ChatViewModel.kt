@@ -113,6 +113,20 @@ class ChatViewModel @Inject constructor(
     private val _isLoaded = MutableStateFlow(false)
     val isLoaded = _isLoaded.asStateFlow()
 
+    // Anthropic Tools bottom sheet
+    private val _isToolsSheetOpen = MutableStateFlow(false)
+    val isToolsSheetOpen = _isToolsSheetOpen.asStateFlow()
+
+    /** Tool IDs currently enabled for this chat (e.g. "web_search"). */
+    private val _enabledTools = MutableStateFlow<Set<String>>(emptySet())
+    val enabledTools = _enabledTools.asStateFlow()
+
+    /** True when at least one Anthropic platform is active in this chat. */
+    fun hasAnthropicPlatform(): Boolean = _enabledPlatformsInApp.value.any { platform ->
+        platform.uid in enabledPlatformsInChat &&
+            platform.compatibleType == dev.chungjungsoo.gptmobile.data.model.ClientType.ANTHROPIC
+    }
+
     private var pendingQuestionText: String? = null
 
     init {
@@ -121,7 +135,6 @@ class ChatViewModel @Inject constructor(
         fetchEnabledPlatformsInApp()
         observeStateChanges()
     }
-
     fun addMessage(userMessage: MessageV2) {
         _groupedMessages.update {
             it.copy(
@@ -177,6 +190,24 @@ class ChatViewModel @Inject constructor(
     fun openChatTitleDialog() = _isChatTitleDialogOpen.update { true }
     fun openChatModelDialog() = _isChatModelDialogOpen.update { true }
 
+    fun openToolsSheet() = _isToolsSheetOpen.update { true }
+    fun closeToolsSheet() = _isToolsSheetOpen.update { false }
+
+    fun toggleTool(toolId: String) {
+        _enabledTools.update { current ->
+            if (current.contains(toolId)) current - toolId else current + toolId
+        }
+        // Persist to database if the chat room already exists
+        if (_chatRoom.value.id > 0) {
+            viewModelScope.launch {
+                chatRepository.updateChatEnabledTools(_chatRoom.value, _enabledTools.value)
+            }
+        }
+    }
+
+    /** Returns true if the given Anthropic built-in tool is currently enabled. */
+    fun isToolEnabled(toolId: String): Boolean = _enabledTools.value.contains(toolId)
+
     fun openEditQuestionDialog(question: MessageV2) {
         _editedQuestion.update { question }
         _isEditQuestionDialogOpen.update { true }
@@ -216,12 +247,25 @@ class ChatViewModel @Inject constructor(
             it.copy(assistantMessages = updatedAssistantMessages)
         }
 
+        val tools = _enabledTools.value
+        val isAnthropic = platform.compatibleType == dev.chungjungsoo.gptmobile.data.model.ClientType.ANTHROPIC
+
         viewModelScope.launch {
-            chatRepository.completeChat(
-                _groupedMessages.value.userMessages,
-                _groupedMessages.value.assistantMessages,
-                platformWithChatModel
-            ).handleStates(
+            val flow = if (isAnthropic && tools.isNotEmpty()) {
+                chatRepository.completeChatWithTools(
+                    _groupedMessages.value.userMessages,
+                    _groupedMessages.value.assistantMessages,
+                    platformWithChatModel,
+                    tools
+                )
+            } else {
+                chatRepository.completeChat(
+                    _groupedMessages.value.userMessages,
+                    _groupedMessages.value.assistantMessages,
+                    platformWithChatModel
+                )
+            }
+            flow.handleStates(
                 messageFlow = _groupedMessages,
                 platformIdx = platformIndex,
                 onLoadingComplete = {
@@ -370,12 +414,25 @@ class ChatViewModel @Inject constructor(
         enabledPlatformsInChat.forEachIndexed { idx, platformUid ->
             val platform = _enabledPlatformsInApp.value.firstOrNull { it.uid == platformUid } ?: return@forEachIndexed
             val platformWithChatModel = resolvePlatformModel(platform)
+            val tools = _enabledTools.value
+            val isAnthropic = platform.compatibleType == dev.chungjungsoo.gptmobile.data.model.ClientType.ANTHROPIC
+
             viewModelScope.launch {
-                chatRepository.completeChat(
-                    _groupedMessages.value.userMessages,
-                    _groupedMessages.value.assistantMessages,
-                    platformWithChatModel
-                ).handleStates(
+                val flow = if (isAnthropic && tools.isNotEmpty()) {
+                    chatRepository.completeChatWithTools(
+                        _groupedMessages.value.userMessages,
+                        _groupedMessages.value.assistantMessages,
+                        platformWithChatModel,
+                        tools
+                    )
+                } else {
+                    chatRepository.completeChat(
+                        _groupedMessages.value.userMessages,
+                        _groupedMessages.value.assistantMessages,
+                        platformWithChatModel
+                    )
+                }
+                flow.handleStates(
                     messageFlow = _groupedMessages,
                     platformIdx = idx,
                     onLoadingComplete = {
@@ -589,6 +646,13 @@ class ChatViewModel @Inject constructor(
                     chatRepository.fetchChatListV2().first { it.id == chatRoomId }
                 }
             }
+            // Restore persisted tool selections
+            val savedTools = _chatRoom.value.enabledTools
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toSet()
+            _enabledTools.update { savedTools }
         }
     }
 
@@ -630,10 +694,11 @@ class ChatViewModel @Inject constructor(
                     (_groupedMessages.value.userMessages.isNotEmpty() && _groupedMessages.value.assistantMessages.isNotEmpty()) &&
                     (_groupedMessages.value.userMessages.size == _groupedMessages.value.assistantMessages.size)
                 ) {
-                    // Save the chat & chat room
+                    // Save the chat & chat room (carry current tool selection)
+                    val toolsString = _enabledTools.value.filter { it.isNotBlank() }.joinToString(",")
                     _chatRoom.update {
                         chatRepository.saveChat(
-                            chatRoom = _chatRoom.value,
+                            chatRoom = _chatRoom.value.copy(enabledTools = toolsString),
                             messages = ungroupedMessages(),
                             chatPlatformModels = _chatPlatformModels.value
                         )

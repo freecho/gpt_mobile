@@ -4,6 +4,7 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 
 /**
 When certain value is used in the future, use @EncodeDefault or remove default values
@@ -51,7 +52,20 @@ data class MessageRequest(
 
     @SerialName("thinking")
     @EncodeDefault(EncodeDefault.Mode.NEVER)
-    val thinking: ThinkingConfig? = null
+    val thinking: ThinkingConfig? = null,
+
+    /**
+     * Tools list as pre-serialized JsonElement entries.
+     * Using JsonElement avoids polymorphic sealed-class serialization issues
+     * when the parent Json instance has encodeDefaults = false.
+     */
+    @SerialName("tools")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val tools: List<JsonElement>? = null,
+
+    @SerialName("tool_choice")
+    @EncodeDefault(EncodeDefault.Mode.NEVER)
+    val toolChoice: ToolChoice? = null
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -64,4 +78,11 @@ data class ThinkingConfig(
     @SerialName("budget_tokens")
     @EncodeDefault(EncodeDefault.Mode.ALWAYS)
     val budgetTokens: Int = 10000
+)
+
+/** Controls which tools Claude may use. Defaults to "auto" when tools are provided. */
+@Serializable
+data class ToolChoice(
+    @SerialName("type")
+    val type: String = "auto"
 )
