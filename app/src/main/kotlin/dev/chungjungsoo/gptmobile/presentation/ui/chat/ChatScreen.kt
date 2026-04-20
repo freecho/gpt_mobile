@@ -120,6 +120,8 @@ fun ChatScreen(
     val isChatModelDialogOpen by chatViewModel.isChatModelDialogOpen.collectAsStateWithLifecycle()
     val isEditQuestionDialogOpen by chatViewModel.isEditQuestionDialogOpen.collectAsStateWithLifecycle()
     val isSelectTextSheetOpen by chatViewModel.isSelectTextSheetOpen.collectAsStateWithLifecycle()
+    val isToolsSheetOpen by chatViewModel.isToolsSheetOpen.collectAsStateWithLifecycle()
+    val enabledTools by chatViewModel.enabledTools.collectAsStateWithLifecycle()
     val isLoaded by chatViewModel.isLoaded.collectAsStateWithLifecycle()
     val selectedAttachments by chatViewModel.selectedAttachments.collectAsStateWithLifecycle()
     val attachmentNotice by chatViewModel.attachmentNotice.collectAsStateWithLifecycle()
@@ -130,7 +132,7 @@ fun ChatScreen(
     val canUseChat = (chatViewModel.enabledPlatformsInChat.toSet() - appEnabledPlatforms.map { it.uid }.toSet()).isEmpty()
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
     val showToolsButton = remember(appAllPlatforms) { chatViewModel.hasWebSearchPlatform() }
-    val webSearchActive = remember(appAllPlatforms) { chatViewModel.hasWebSearchPlatform() }
+    val webSearchActive = enabledTools.isNotEmpty()
     val context = LocalContext.current
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
 
@@ -285,12 +287,21 @@ fun ChatScreen(
                 selectedAttachments = selectedAttachments,
                 webSearchActive = webSearchActive,
                 showToolsButton = showToolsButton,
+                onToolsClick = chatViewModel::openToolsSheet,
                 onFileSelected = { filePath -> chatViewModel.addSelectedFile(filePath) },
                 onFileRemoved = { filePath -> chatViewModel.removeSelectedFile(filePath) }
             ) {
                 chatViewModel.askQuestion()
                 focusManager.clearFocus()
             }
+        }
+
+        if (isToolsSheetOpen) {
+            AnthropicToolsSheet(
+                enabledTools = enabledTools,
+                onDismissRequest = chatViewModel::closeToolsSheet,
+                onToggleTool = chatViewModel::toggleTool
+            )
         }
 
         if (isChatTitleDialogOpen) {
@@ -614,6 +625,7 @@ fun ChatInputBox(
     selectedAttachments: List<ChatAttachmentDraft> = emptyList(),
     webSearchActive: Boolean = false,
     showToolsButton: Boolean = false,
+    onToolsClick: () -> Unit = {},
     onFileSelected: (String) -> Unit = {},
     onFileRemoved: (String) -> Unit = {},
     onSendButtonClick: () -> Unit = {}
@@ -670,16 +682,17 @@ fun ChatInputBox(
                         )
                     }
                     if (showToolsButton) {
-                        Icon(
-                            imageVector = ImageVector.vectorResource(R.drawable.ic_tools),
-                            contentDescription = stringResource(R.string.web_search),
-                            tint = if (webSearchActive) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                androidx.compose.ui.graphics.Color.Unspecified
-                            },
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                        )
+                        IconButton(onClick = onToolsClick) {
+                            Icon(
+                                imageVector = ImageVector.vectorResource(R.drawable.ic_tools),
+                                contentDescription = stringResource(R.string.web_search),
+                                tint = if (webSearchActive) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    androidx.compose.ui.graphics.Color.Unspecified
+                                }
+                            )
+                        }
                     }
                     Box(
                         modifier = Modifier

@@ -17,6 +17,7 @@ import dev.chungjungsoo.gptmobile.data.repository.ChatRepository
 import dev.chungjungsoo.gptmobile.data.repository.SettingRepository
 import dev.chungjungsoo.gptmobile.util.AttachmentPayloadCache
 import dev.chungjungsoo.gptmobile.util.FileUtils
+import dev.chungjungsoo.gptmobile.data.dto.anthropic.request.BuiltinTool
 import dev.chungjungsoo.gptmobile.util.getPlatformName
 import dev.chungjungsoo.gptmobile.util.handleStates
 import javax.inject.Inject
@@ -66,6 +67,12 @@ class ChatViewModel @Inject constructor(
 
     private val _isChatModelDialogOpen = MutableStateFlow(false)
     val isChatModelDialogOpen = _isChatModelDialogOpen.asStateFlow()
+
+    private val _isToolsSheetOpen = MutableStateFlow(false)
+    val isToolsSheetOpen = _isToolsSheetOpen.asStateFlow()
+
+    private val _enabledTools = MutableStateFlow<Set<String>>(emptySet())
+    val enabledTools = _enabledTools.asStateFlow()
 
     private val _chatPlatformModels = MutableStateFlow<Map<String, String>>(emptyMap())
     val chatPlatformModels = _chatPlatformModels.asStateFlow()
@@ -117,6 +124,22 @@ class ChatViewModel @Inject constructor(
     fun hasWebSearchPlatform(): Boolean = _platformsInApp.value.any { platform ->
         platform.uid in enabledPlatformsInChat && platform.webSearch
     }
+
+    fun openToolsSheet() { _isToolsSheetOpen.update { true } }
+    fun closeToolsSheet() { _isToolsSheetOpen.update { false } }
+    fun toggleTool(toolId: String) {
+        _enabledTools.update { current ->
+            if (current.contains(toolId)) current - toolId else current + toolId
+        }
+        if (_chatRoom.value.id > 0) {
+            viewModelScope.launch {
+                chatRepository.updateChatEnabledTools(_chatRoom.value, _enabledTools.value)
+            }
+        }
+    }
+
+    /** True when at least one tool is enabled. */
+    fun hasEnabledTools(): Boolean = _enabledTools.value.isNotEmpty()
 
     private var pendingQuestionText: String? = null
 
@@ -223,12 +246,12 @@ class ChatViewModel @Inject constructor(
         val isAnthropic = platform.compatibleType == dev.chungjungsoo.gptmobile.data.model.ClientType.ANTHROPIC
 
         viewModelScope.launch {
-            val flow = if (isAnthropic && platform.webSearch) {
+            val flow = if (isAnthropic && _enabledTools.value.isNotEmpty()) {
                 chatRepository.completeChatWithTools(
                     _groupedMessages.value.userMessages,
                     _groupedMessages.value.assistantMessages,
                     platformWithChatModel,
-                    setOf("web_search_20250305")
+                    _enabledTools.value
                 )
             } else {
                 chatRepository.completeChat(
@@ -617,6 +640,12 @@ class ChatViewModel @Inject constructor(
                     chatRepository.fetchChatListV2().first { it.id == chatRoomId }
                 }
             }
+            val savedTools = _chatRoom.value.enabledTools
+                .split(",")
+                .map { it.trim() }
+                .filter { it.isNotBlank() }
+                .toSet()
+            _enabledTools.update { savedTools }
         }
     }
 
