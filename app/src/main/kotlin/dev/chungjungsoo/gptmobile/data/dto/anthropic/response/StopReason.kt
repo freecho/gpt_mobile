@@ -16,5 +16,11 @@ enum class StopReason {
     STOP_SEQUENCE,
 
     @SerialName("tool_use")
-    TOOL_USE
+    TOOL_USE,
+
+    // Returned when the server-side agentic loop hits its iteration limit.
+    // The client should re-send the conversation (user + assistant messages) without a
+    // tool_result so the server can resume where it left off.
+    @SerialName("pause_turn")
+    PAUSE_TURN
 }

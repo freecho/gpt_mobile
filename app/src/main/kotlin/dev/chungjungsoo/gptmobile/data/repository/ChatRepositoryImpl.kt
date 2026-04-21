@@ -521,6 +521,7 @@ class ChatRepositoryImpl @Inject constructor(
         anthropicAPI.setAPIUrl(platform.apiUrl)
 
         flow {
+            emit(ApiState.Loading)
             val preparedUserMessages = prepareMessagesForPlatform(userMessages, platform)
             val messages = mutableListOf<InputMessage>()
 
@@ -604,6 +605,11 @@ class ChatRepositoryImpl @Inject constructor(
                                         StringBuilder()
                                     )
                                     emit(ApiState.ToolUsing(block.name ?: "tool"))
+                                }
+                                // Server-side tool (e.g. web_search_20260209): Anthropic executes it
+                                // internally. Emit a "searching" indicator so the UI shows progress.
+                                dev.chungjungsoo.gptmobile.data.dto.anthropic.response.ContentBlockType.SERVER_TOOL_USE -> {
+                                    emit(ApiState.ToolUsing(block.name ?: "web_search"))
                                 }
                                 else -> {}
                             }
@@ -691,7 +697,19 @@ class ChatRepositoryImpl @Inject constructor(
                 if (stopReason != dev.chungjungsoo.gptmobile.data.dto.anthropic.response.StopReason.TOOL_USE ||
                     toolUseBuilders.isEmpty()
                 ) {
-                    // Done — no more tool calls
+                    // end_turn, max_tokens, null, or server-side tool (stop_reason was
+                    // pause_turn / end_turn after Anthropic executed the tool internally).
+                    // Also covers the case where stop_reason is tool_use but no client-side
+                    // tool_use blocks were captured (server_tool_use blocks are handled server-side).
+                    if (stopReason == dev.chungjungsoo.gptmobile.data.dto.anthropic.response.StopReason.PAUSE_TURN &&
+                        assistantContentBlocks.isNotEmpty()
+                    ) {
+                        // Server-side loop hit its iteration limit. Re-send the conversation
+                        // WITHOUT a tool_result so the server can resume automatically.
+                        loopMessages.add(InputMessage(role = MessageRole.ASSISTANT, content = assistantContentBlocks))
+                        // Continue to next iteration — server resumes where it left off.
+                        continue
+                    }
                     break
                 }
 

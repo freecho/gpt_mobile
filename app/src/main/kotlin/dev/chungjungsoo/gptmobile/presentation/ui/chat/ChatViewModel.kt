@@ -120,9 +120,10 @@ class ChatViewModel @Inject constructor(
     private val _isLoaded = MutableStateFlow(false)
     val isLoaded = _isLoaded.asStateFlow()
 
-    /** True when at least one platform in this chat has web search enabled in settings. */
-    fun hasWebSearchPlatform(): Boolean = _platformsInApp.value.any { platform ->
-        platform.uid in enabledPlatformsInChat && platform.webSearch
+    /** True when at least one Anthropic-compatible platform is enabled in this chat. */
+    fun hasAnthropicPlatform(): Boolean = _platformsInApp.value.any { platform ->
+        platform.uid in enabledPlatformsInChat &&
+            platform.compatibleType == dev.chungjungsoo.gptmobile.data.model.ClientType.ANTHROPIC
     }
 
     fun openToolsSheet() { _isToolsSheetOpen.update { true } }

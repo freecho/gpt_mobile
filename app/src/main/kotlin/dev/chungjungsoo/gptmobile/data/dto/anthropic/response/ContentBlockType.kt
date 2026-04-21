@@ -28,5 +28,19 @@ enum class ContentBlockType {
     TOOL_USE,
 
     @SerialName("input_json_delta")
-    INPUT_JSON_DELTA
+    INPUT_JSON_DELTA,
+
+    // Server-side tool events emitted by Anthropic infrastructure (e.g. web_search_20260209).
+    // The server executes the tool internally; the client only needs to display the final text.
+    @SerialName("server_tool_use")
+    SERVER_TOOL_USE,
+
+    @SerialName("web_search_tool_result")
+    WEB_SEARCH_TOOL_RESULT,
+
+    @SerialName("web_fetch_tool_result")
+    WEB_FETCH_TOOL_RESULT,
+
+    @SerialName("server_tool_use_delta")
+    SERVER_TOOL_USE_DELTA
 }

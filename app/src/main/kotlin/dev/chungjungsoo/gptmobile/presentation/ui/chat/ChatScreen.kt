@@ -131,7 +131,7 @@ fun ChatScreen(
     val enabledPlatformLookup = remember(appEnabledPlatforms) { appEnabledPlatforms.associateBy { it.uid } }
     val canUseChat = (chatViewModel.enabledPlatformsInChat.toSet() - appEnabledPlatforms.map { it.uid }.toSet()).isEmpty()
     val isIdle = loadingStates.all { it == ChatViewModel.LoadingState.Idle }
-    val showToolsButton = remember(appAllPlatforms) { chatViewModel.hasWebSearchPlatform() }
+    val showToolsButton = remember(appAllPlatforms) { chatViewModel.hasAnthropicPlatform() }
     val webSearchActive = enabledTools.isNotEmpty()
     val context = LocalContext.current
     val lastMessageIndex = groupedMessages.userMessages.lastIndex
